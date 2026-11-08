@@ -4,7 +4,7 @@ How to set up and use a clock running [HA Tubes](https://github.com/nict41/HA-Tu
 
 * [Connecting to Wi-Fi](#connecting-to-wi-fi)
 * [Status messages](#status-messages)
-* [The web UI](#the-web-ui): [Clock](#clock), [Panels](#showing-pictures-from-home-assistant-panels), [LEDs](#leds), [Files](#files), [Weather](#weather), [Screen Saver](#screen-saver), [MQTT](#mqtt-and-home-assistant), [Network](#network), [Info](#info)
+* [The web UI](#the-web-ui): [Clock](#clock), [Panels](#panels-page), [LEDs](#leds), [Files](#files), [Weather](#weather), [Screen Saver](#screen-saver), [MQTT](#mqtt-and-home-assistant), [Network](#network), [Info](#info), [About](#about)
 * [Clock buttons](#clock-buttons)
 * [Showing your own text](#showing-your-own-text)
 * [Showing pictures from Home Assistant (panels)](#showing-pictures-from-home-assistant-panels)
@@ -62,13 +62,15 @@ At the top of every page:
 
 <img src="ui/menu.webp" alt="The menu" width="360">
 
+The menu groups the pages: **Display** ([Clock](#clock), [Panels](#panels-page), [Screen Saver](#screen-saver), [LEDs](#leds)), **Content** ([Weather](#weather), [Files](#files)), **Connections** ([Network](#network), [MQTT](#mqtt-and-home-assistant)) and **System** ([Info](#info), [About](#about)).
+
 There's no Save button. A change takes effect on the clock straight away, and the clock saves it within a minute, so it's kept when the clock restarts. Changes made with the clock's buttons or from Home Assistant appear in the web UI as they happen.
 
 ## Clock
 
 <img src="ui/clock.webp" alt="The Clock page" width="400">
 
-* **Display** chooses what the clock shows: the **Time**, the **Date**, the **Weather** forecast, a **Slide Show** of pictures or **Panels**, pictures streamed to the displays over HTTP, see [Showing pictures from Home Assistant (panels)](#showing-pictures-from-home-assistant-panels). The clock's mode button cycles through the first four.
+* **Display** chooses what the clock shows: the **Time**, the **Date**, the **Weather** forecast, a **Slide Show** of pictures or **Panels**, pictures streamed to the displays over HTTP, see [Showing pictures from Home Assistant (panels)](#showing-pictures-from-home-assistant-panels). The clock's mode button cycles through the first four. While Panels is showing, the button asks Home Assistant's Tube Display app for its next screen instead, see [Clock buttons](#clock-buttons).
 * **Cycle Time, Date, Weather** shows each of the time, the date and the weather for this many seconds, then moves on to the next. 0 turns it off. The weather is skipped if there's no OpenWeatherMap API key. A slide show isn't part of the cycle, and gives way to the time.
 * **Number of Digits**, **12/24 Hour** and **Leading Zero** are shown when Display is Time:
   * **Six** shows hours, minutes and seconds.
@@ -82,6 +84,12 @@ There's no Save button. A change takes effect on the clock straight away, and th
 * **Off State** chooses what the displays do outside those hours: **Blank** turns them off, **Dim** carries on showing the same things more dimly, still cycling through the time, date and weather if Cycle Time, Date, Weather is set, and **Matrix** shows the digital rain animation, in the colors set on the [Screen Saver](#screen-saver) page.
 * **Brightness** sets how bright the displays are, from 10 to 255.
 * **Timezone Definition** tells the clock its offset from UTC and when daylight saving time starts and ends. Find your area in [this list](https://github.com/nayarsystems/posix_tz_db/blob/master/zones.csv) and copy the text from its second column, without the quotes, such as `EST5EDT,M3.2.0,M11.1.0` for America/New_York.
+
+## Panels page
+
+<img src="ui/panels.webp" alt="The Panels page" width="400">
+
+Explains panels and shows their live status: which tubes are panel tubes, and which are still waiting for a picture (after a restart, the screen saver or a status message, until Home Assistant sends it again). **Refresh** checks again. Panels are turned on with **Display** set to **Panels**, or **Number of Digits** set to **Four + Panel**, on the [Clock](#clock) page. See [Showing pictures from Home Assistant (panels)](#showing-pictures-from-home-assistant-panels) for sending pictures.
 
 ## LEDs
 
@@ -168,10 +176,39 @@ Topics start with `clock/<id>`, where `<id>` is the clock's **MQTT ID** from the
 | `clock/<id>/set/backlight_hs` | Hue from 0 to 360 and saturation from 0 to 100, such as `240,100` |
 | `clock/<id>/set/backlight_brightness` | 0 to 255 |
 | `clock/<id>/set/restart` | Anything. Restarts the clock. Don't set the retain flag. |
+| `clock/<id>/set/ota_install` | `install`: download and install the firmware named on `clock/<id>/ota/latest`, see [Updating over Wi-Fi](#updating-over-wi-fi). Don't set the retain flag. |
 
 IPSTube clocks have the same three topics for the underlight, such as `clock/<id>/set/underlight_hs`, though it's turned on and off together with the backlight. Every other setting has a topic too, which Home Assistant shows under the entity's **MQTT INFO**.
 
 The clock publishes its state on `clock/<id>/volatile/state` (brightness, display, screen saver, backlight, custom text and the panel tubes, `panel_tubes` and `panels_needed`, see [Showing pictures from Home Assistant (panels)](#showing-pictures-from-home-assistant-panels)) and `clock/<id>/persistent/state` (the settings, without passwords or the API key), and `online` or `offline` on `clock/<id>/availability`.
+
+It also publishes:
+
+* `clock/<id>/ota/state` (retained): the installed and latest firmware versions and update progress, for Home Assistant's **Firmware** update entity, see [Updating over Wi-Fi](#updating-over-wi-fi).
+* `clock/<id>/button` = `next` (not retained) when the button is pressed while panels are showing. The Tube Display app listens for it to show its next screen; your own automations can too.
+
+Besides the settings, Home Assistant gets a **Firmware** update entity (under Configuration) and a **Restart** button. The two pictures above are from the original firmware, so they don't show the Firmware entity or the Panels options.
+
+For example, an automation can follow the sun with the clock's brightness: full brightness in daylight, fading to the lowest as the sun goes down:
+
+```yaml
+- alias: Clock brightness follows the sun
+  mode: restart
+  triggers:
+    - trigger: state
+      entity_id: sun.sun
+      attribute: elevation
+  actions:
+    - variables:
+        elevation: "{{ state_attr('sun.sun', 'elevation') | float(0) }}"
+        # 0 at 6° below the horizon (dusk) or lower, 1 at 3° above or higher
+        daylight: "{{ [0, [1, (elevation + 6) / 9] | min] | max }}"
+    - action: number.set_value
+      target:
+        entity_id: number.ips_clock_brightness
+      data:
+        value: "{{ (10 + 245 * daylight) | round(0) | int }}"
+```
 
 ## Network
 
@@ -196,6 +233,13 @@ Details of the clock, mostly for troubleshooting:
 * The **Heap** rows show how much memory is free, and the **Sketch** and **File System** rows how much flash.
 * **Uptime** is how long since the clock last started.
 * **Last Sync Time** is when the clock last got the time from the time server, and **Sync Failed Msg** and **Sync Failed Count** say why and how often that failed.
+* **Firmware update**, at the bottom: pick a `firmware-*.bin` file and press **Update** to install it over Wi-Fi, or a `littlefs*.bin` file to update the file system image. See [Updating over Wi-Fi](#updating-over-wi-fi).
+
+## About
+
+<img src="ui/about.webp" alt="The About page" width="400">
+
+The firmware version, what HA Tubes does, links to the project, this guide and the Tube Display app, and the credits: HA Tubes is based on [EleksTubeIPS](https://github.com/judge2005/EleksTubeIPS) by Paul Andrews.
 
 ## Clock buttons
 
@@ -219,6 +263,13 @@ When the displays are off for the night (outside the Display On hours):
 
 On the IPSTube, pressing power switches between the time, the date, the weather and the slide show, and holding it works as above.
 
+**While panels are showing** (Display set to Panels), pressing the button (mode, or power on the IPSTube) doesn't change the display mode. Instead the clock publishes `next` on `clock/<id>/button`, and the [Tube Display](https://github.com/nict41/nict41-s-HA-Apps/tree/main/tube_display) app shows its next screen:
+
+* With the app's **Cycle automatically** on, the press skips to the next screen and the rotation carries on from there.
+* With it off, screens only change when you press the button, and the clock's own time display (the `clock` rotation entry) is skipped, since the button can't bring the panels back from it. To go back to the time, set the app's **Tube Display Screen** select in Home Assistant to **Clock**.
+
+If the clock isn't connected to MQTT, the button falls back to switching display modes as usual.
+
 ## Showing your own text
 
 The clock can show up to six characters instead of the time, one on each display, drawn with the clock face's images: digits, `:`, `a` for AM, `p` for PM, and a space or `_` for a blank display. Anything else shows as a blank. Send `clear`, or nothing, to go back to the time.
@@ -235,6 +286,8 @@ curl -d value=clear http://<clock>/custom
 ## Showing pictures from Home Assistant (panels)
 
 With **Display** set to **Panels**, all six displays show pictures streamed to the clock over HTTP instead of the time. With **Number of Digits** set to **Four + Panel** while Display is Time, only the last display does, and the other four show the time as usual. The clock's mode button skips Panels, so choose it in the web UI or over MQTT (`clock/<id>/set/display` with 4).
+
+The easy way to use panels is the **[Tube Display](https://github.com/nict41/nict41-s-HA-Apps/tree/main/tube_display)** Home Assistant app. It switches the clock to Panels for you and draws screens from your Home Assistant states: rings, big numbers, text, icons, pictures and camera images. It rotates through them, or steps through them with the clock's button, and has a visual editor in the Home Assistant sidebar. See the [README](../README.md#connect-it-to-home-assistant) to install it. The rest of this section is for sending pictures yourself.
 
 Send a picture to a tube with:
 
@@ -302,18 +355,20 @@ Install the firmware once over USB with the **Full** option of the web installer
 * Or with curl, sending the raw file as the body:
 
 ```
-curl --data-binary @firmware-ipstube-2.2.0.bin -H 'Content-Type: application/octet-stream' \
+curl --data-binary @firmware-ipstube-2.3.0.bin -H 'Content-Type: application/octet-stream' \
   http://<clock>/update
 ```
 
 If the web UI has a login, add `--digest -u <user>:<password>`. To update the file system image as well (the web UI pages and the built-in faces and icons), send `littlefs*.bin` with `?target=fs`: `curl --data-binary @littlefs8MB-X.bin -H 'Content-Type: application/octet-stream' 'http://<clock>/update?target=fs'`, or pick that file on the Info page, which sends it there by its name. This replaces uploaded faces, icons and slides with the built-in ones; settings are kept. An optional `md5` query argument checks the file, e.g. `http://<clock>/update?md5=<32 hex digits>`. The reply is `200 Updated, restarting`, or the error, such as `501` on a clock with no second slot or `409` when an update is already running.
 
-With Home Assistant, a **Firmware** update entity appears under the clock's Configuration. It offers an update once the broker has a message on `clock/<id>/ota/latest` (retained) with a newer version, published by an app of yours:
+With Home Assistant, a **Firmware** update entity appears under the clock's Configuration. It offers an update once the broker has a message on `clock/<id>/ota/latest` (retained) with a newer version. Nothing publishes that message for you yet: GitHub serves release files over HTTPS only, which the clock can't download, so put the firmware on a plain `http://` server on your network (for example Home Assistant's `/local` folder, `http://<home-assistant>:8123/local/firmware-ipstube-2.3.0.bin`) and publish, retained:
 
 ```json
-{"version":"2.2.0-nt1","url":"http://192.168.8.25:8098/firmware/firmware-ipstube.bin","md5":"<32 hex>","release_url":"https://github.com/nict41/HA-Tubes/releases","title":"2.2.0-nt1"}
+{"version":"2.3.0","url":"http://<home-assistant>:8123/local/firmware-ipstube-2.3.0.bin","md5":"<32 hex>","release_url":"https://github.com/nict41/HA-Tubes/releases/tag/v2.3.0","title":"HA Tubes 2.3.0"}
 ```
 
 Only `http://` URLs work, the clock doesn't have enough memory for TLS. Pressing **Install** on the entity makes the clock download the file and restart into it; the entity's state is on `clock/<id>/ota/state` (retained), and the install command goes to `clock/<id>/set/ota_install` with payload `install` (don't set the retain flag).
+
+If the [Tube Display](https://github.com/nict41/nict41-s-HA-Apps/tree/main/tube_display) app is running, stop it while you update (Settings → Apps → Tube Display → Stop): pictures it sends during the upload can make the update fail. Start it again afterwards.
 
 If an update fails or the new firmware doesn't run, recover over USB as before: the web installer or `esptool.py` writes a slot directly.

@@ -39,6 +39,8 @@ HA Tubes is based on [EleksTubeIPS](https://github.com/judge2005/EleksTubeIPS) b
   * a YAML view for anything else
 * Home Assistant entities to pick or pin a screen and to turn rotation on or off.
 
+![The Tube Display screen editor](docs/ha-tubes/editor.webp)
+
 ### Firmware updates over Wi-Fi
 * A two-slot flash layout on the 8 MB IPSTube clocks. After one USB install, every later update goes
   over Wi-Fi.
@@ -48,9 +50,13 @@ HA Tubes is based on [EleksTubeIPS](https://github.com/judge2005/EleksTubeIPS) b
   * press **Install** on the clock's **Firmware** update entity in Home Assistant
 * Optional MD5 check, progress on the tubes and in Home Assistant, automatic restart into the new
   firmware.
+* The file system image (web UI, built-in faces and icons) can be updated over Wi-Fi too
+  (`?target=fs`, or pick a `littlefs*.bin` on the Info page).
 
 ### A refreshed web UI
 * A new HA Tubes theme in light and dark, a regrouped menu, and new **Panels** and **About** pages.
+
+<img src="docs/ui/clock.webp" alt="The Clock page" width="250"> <img src="docs/ui/menu.webp" alt="The menu" width="250"> <img src="docs/ui/panels.webp" alt="The Panels page" width="250">
 
 ### Everything from the original firmware
 * Time, date, weather forecast and slide show display modes, with NTP time sync and automatic time
@@ -111,6 +117,9 @@ page. For an IPSTube they go at these addresses:
    2. Choose what it shows (an entity, fixed text or a template), its colour or colour thresholds, an
       icon or a picture.
    3. Save. The rotation runs straight away.
+4. Use the clock's button. While panels are showing, a press shows the app's next screen. Untick
+   **Cycle automatically** in the editor, or turn off the **Tube Display Rotation** switch, and screens
+   change only when you press it. See [Clock buttons](docs/user-guide.md#clock-buttons).
 
 ### How it fits together
 
