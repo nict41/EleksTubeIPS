@@ -39,5 +39,44 @@
 						<tr><th>Sync&nbsp;Failed&nbsp;Count</th><td id="sync_failed_cnt">...</td></tr>
 					</tbody>
 				</table>
+				<fieldset data-role="controlgroup" data-mini="true">
+					<legend>Firmware update</legend>
+					<input type="file" accept=".bin" id="firmware_file" data-clear-btn="true"/>
+					<input type="button" value="Update" data-inline="true" data-mini="true" onclick="updateFirmware();"/>
+					<p id="firmware_status"></p>
+				</fieldset>
 			</div>
         </div>
+		<script>
+			function updateFirmware() {
+				var fileInfo = document.getElementById('firmware_file').files[0];
+				if (typeof(fileInfo) == 'undefined' || fileInfo.size == 0) {
+					return;
+				}
+
+				var status = document.getElementById('firmware_status');
+				status.textContent = 'Uploading 0%';
+
+				var formData = new FormData();
+				formData.append('firmware', fileInfo);
+
+				var xhr = new XMLHttpRequest();
+				xhr.open('POST', '/update', true);
+				xhr.upload.onprogress = function (event) {
+					if (event.lengthComputable) {
+						status.textContent = 'Uploading ' + Math.round(event.loaded * 100 / event.total) + '%';
+					}
+				};
+				xhr.onload = function () {
+					if (xhr.status == 200) {
+						status.textContent = 'Updated, restarting';
+					} else {
+						status.textContent = 'Update failed: ' + xhr.responseText;
+					}
+				};
+				xhr.onerror = function () {
+					status.textContent = 'Update failed: no reply from the clock';
+				};
+				xhr.send(formData);
+			}
+		</script>

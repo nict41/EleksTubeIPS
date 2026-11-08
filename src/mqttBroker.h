@@ -51,12 +51,26 @@ private:
     void startFileMessage(const char *path, const uint8_t *payload, size_t length, size_t total_length);
     void publishFileStatus();
 
+    void onOtaLatest(const char *payload);
+    void publishOtaState();
+    void startOtaInstall();
+
     String id;
     char home[40];
     char persistentStateTopic[64];
     char volatileStateTopic[64];
     char availabilityTopic[64];
     char fileStatusTopic[64];
+    char otaStateTopic[64];
+
+    // The latest release from clock/<id>/ota/latest, kept in fixed buffers so an oversize value is ignored
+    char otaVersion[24];
+    char otaUrl[128];
+    char otaMd5[33];
+    char otaReleaseUrl[128];
+    char otaTitle[64];
+    bool otaLatestReceived = false;
+    uint32_t lastOtaStatePublish = 0;   // The percentage goes out at most once a second
 
     bool deviceDescribed = false;   // Whether this round of discovery messages has described the device yet
 
@@ -81,6 +95,9 @@ private:
     const char* underlightBrightnessTopic = "~/set/underlight_brightness";
 
     const char* restartTopic = "~/set/restart";
+
+    const char* otaLatestSub = "~/ota/latest";	// Subscribed, published by a Home Assistant app
+    const char* otaInstallTopicName = "~/set/ota_install";
 
     // ~/files/<upload|delete>/<faces|weather|slides>/<name>
     const char* filesTopic = "~/files/";

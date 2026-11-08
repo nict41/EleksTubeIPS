@@ -2,7 +2,7 @@
 Write what's changed here before publishing this draft. Say whether installing only the firmware is enough, and whether going back to an earlier version keeps the clock's settings.
 
 # Installation #
-This firmware can't update itself over Wi-Fi, so flash it over USB. The easiest way is the [web installer]($installer$), which works in Chrome or Edge on a computer. The [installation guide](https://github.com/judge2005/EleksTubeIPS/wiki/Installation) covers connecting the clock and backing up its original firmware.
+The IPSTube clocks (H401/H402 and the hardware-dimming one) can now update themselves over Wi-Fi, see [Updating over Wi-Fi](https://github.com/judge2005/EleksTubeIPS/blob/main/docs/user-guide.md#updating-over-wi-fi). The other clocks still can't, so flash them over USB. The easiest way is the [web installer]($installer$), which works in Chrome or Edge on a computer. The [installation guide](https://github.com/judge2005/EleksTubeIPS/wiki/Installation) covers connecting the clock and backing up its original firmware.
 
 **Upgrading from 1.9.4 or later:** choose **Upgrade** in the web installer, or flash only the firmware file for your clock at `0x10000`. Your settings, Wi-Fi details and uploaded images are kept. In Home Assistant, the existing entities keep their IDs.
 
@@ -11,6 +11,8 @@ esptool.py --chip esp32 --port <port> write_flash 0x10000 firmware-elekstubev1-$
 ```
 
 **New install, or upgrading from before 1.9.4:** choose **Full install** in the web installer, or flash `bootloader.bin` at `0x1000`, `partitions.bin` at `0x8000`, `boot_app0.bin` at `0xe000`, the firmware at `0x10000` and `littlefs-$version$.bin` at `0x180000`. A full install replaces your uploaded images with the ones that come with the firmware.
+
+**IPSTube clocks moving from an older release to this one** have a new flash layout with two 2 MB app slots, so they need one **Full install** over USB (or the web installer's full install): `bootloader8MB.bin` at `0x1000`, `partitions8MB.bin` at `0x8000`, `boot_app0.bin` at `0xe000`, the firmware at `0x10000` and `littlefs8MB-$version$.bin` at `0x410000`. Settings and Wi-Fi details are kept, since nvs and otadata stay where they were, but the file system moves, so clock faces, weather icons or slides you uploaded yourself must be uploaded again. After that one full install, later updates can go over Wi-Fi from the Info page, with curl, or from Home Assistant. Recovery is still by USB if an update goes wrong.
 
 NOTE: littlefs8MB-$version$.bin, bootloader8MB.bin and partitions8MB.bin are only for the IPSTube clocks. For all other clocks use littlefs-$version$.bin, bootloader.bin and partitions.bin.
 

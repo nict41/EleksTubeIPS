@@ -12,7 +12,7 @@
           { "path": "partitions8MB.bin", "offset": 32768 },
           { "path": "boot_app0.bin", "offset": 57344 },
           { "path": "firmware-ipstube-$version$.bin", "offset": 65536 },
-          { "path": "littlefs8MB-$version$.bin", "offset": 1572864 }
+          { "path": "littlefs8MB-$version$.bin", "offset": 4259840 }
         ]
       }
     ]

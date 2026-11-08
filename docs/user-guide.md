@@ -290,3 +290,29 @@ For example, with Mosquitto's command-line client:
 mosquitto_pub -h <broker> -u <user> -P <password> \
   -t clock/A1B2C3elekstubeips/files/upload/slides/solar -f solar.tar.gz
 ```
+
+## Updating over Wi-Fi
+
+Clocks with 8 MB of flash (the IPSTube ones) have two firmware slots, so they can update themselves over Wi-Fi. Clocks with 4 MB have only one slot and can't; they still update over USB.
+
+Install the firmware once over USB with the **Full** option of the web installer, which puts the two-slot layout on the flash. It keeps the settings and Wi-Fi details, but the file system moves, so it goes back to the built-in clock faces, weather icons and slides: upload any of your own again. After that, updates go over Wi-Fi:
+
+* On the [Info](#info) page, pick a `firmware-*.bin` file under **Firmware update** and press **Update**. The page shows the upload's progress, then that the clock is restarting.
+* Or with curl, sending the raw file as the body:
+
+```
+curl --data-binary @firmware-ipstube-2.2.0.bin -H 'Content-Type: application/octet-stream' \
+  http://<clock>/update
+```
+
+If the web UI has a login, add `--digest -u <user>:<password>`. An optional `md5` query argument checks the file, e.g. `http://<clock>/update?md5=<32 hex digits>`. The reply is `200 Updated, restarting`, or the error, such as `501` on a clock with no second slot or `409` when an update is already running.
+
+With Home Assistant, a **Firmware** update entity appears under the clock's Configuration. It offers an update once the broker has a message on `clock/<id>/ota/latest` (retained) with a newer version, published by an app of yours:
+
+```json
+{"version":"2.2.0-nt1","url":"http://192.168.8.25:8098/firmware/firmware-ipstube.bin","md5":"<32 hex>","release_url":"https://github.com/judge2005/EleksTubeIPS/releases","title":"2.2.0-nt1"}
+```
+
+Only `http://` URLs work, the clock doesn't have enough memory for TLS. Pressing **Install** on the entity makes the clock download the file and restart into it; the entity's state is on `clock/<id>/ota/state` (retained), and the install command goes to `clock/<id>/set/ota_install` with payload `install` (don't set the retain flag).
+
+If an update fails or the new firmware doesn't run, recover over USB as before: the web installer or `esptool.py` writes a slot directly.

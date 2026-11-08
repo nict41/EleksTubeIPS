@@ -35,6 +35,7 @@
 #include "weather.h"
 #include "ScreenSaver.h"
 #include "mqttBroker.h"
+#include "OTA.h"
 #include "IRAMPtrArray.h"
 #include "Uptime.h"
 #include "TLSArena.h"
@@ -912,6 +913,7 @@ void clockTaskFn(void *pArg) {
 		ipsClock->updateSchedule();
 		showAccessPoint();
 		readButtons();
+		OTA::otaLoop();	// Restarts the clock once a firmware update has succeeded
 
 		// Memory is an issue if the displays need a .gz.tar file unpacked and the weather task
 		// retrieves the forecast at the same time. Also reading images from flash while the weather
@@ -1596,6 +1598,10 @@ static bool panelUploadStart(AsyncWebServerRequest *request, size_t total) {
 		panelUploadFinish(request, 503, "another panel upload is in progress");
 		return false;
 	}
+	if (OTA::otaBusy()) {
+		panelUploadFinish(request, 503, "a firmware update is in progress");
+		return false;
+	}
 
 	panelUpload.request = request;
 	panelUpload.active = true;
@@ -1722,6 +1728,124 @@ void panelHandler(AsyncWebServerRequest *request) {
 	}
 	json += "],\"width\":" + String(TFT_WIDTH) + ",\"height\":" + String(TFT_HEIGHT) + "}";
 	request->send(200, "application/json", json);
+}
+
+/*
+ * The firmware update in progress, like PanelUpload above. ESPAsyncWebServer calls the upload and
+ * body callbacks while the data arrives and the request handler only once all of it has, so the
+ * checks and the writing happen there and updateHandler() sends the reply left in result. Both run
+ * on the web server's task, and OTA only allows one update at a time, so this needs no lock.
+ */
+struct UpdateUpload {
+	AsyncWebServerRequest *request = NULL;	// The upload being written
+	bool active = false;
+
+	AsyncWebServerRequest *resultRequest = NULL;	// The request the reply below is for
+	int resultCode = 0;
+	const char *resultMessage = "";
+};
+static UpdateUpload updateUpload;
+
+// Leaves the reply for the request handler and makes the state ready for the next upload
+static void updateUploadFinish(AsyncWebServerRequest *request, int code, const char *message) {
+	if (updateUpload.request == request) {
+		updateUpload.active = false;
+		updateUpload.request = NULL;
+	}
+	updateUpload.resultRequest = request;
+	updateUpload.resultCode = code;
+	updateUpload.resultMessage = message;
+}
+
+// Checks a new upload when its first bytes arrive. Returns false, with the reply left for the
+// request handler, if it can't be written. size is the firmware's size when it's known: the raw
+// body's length, or 0 for a multipart upload, whose content length includes the boundaries.
+static bool updateUploadStart(AsyncWebServerRequest *request, size_t size) {
+	if (!OTA::otaAvailable()) {
+		updateUploadFinish(request, 501, "This clock has no room for updates over Wi-Fi");
+		return false;
+	}
+	if (OTA::otaBusy()) {
+		updateUploadFinish(request, 409, "An update is already running");
+		return false;
+	}
+
+	String md5 = request->hasArg("md5") ? request->arg("md5") : "";
+	if (!OTA::otaBegin(size, md5.c_str())) {
+		updateUploadFinish(request, 500, OTA::otaError());
+		return false;
+	}
+
+	updateUpload.request = request;
+	updateUpload.active = true;
+	request->onDisconnect([request]() {
+		// Aborted part way through
+		if (updateUpload.request == request) {
+			updateUpload.active = false;
+			updateUpload.request = NULL;
+			OTA::otaAbort("connection lost");
+		}
+		if (updateUpload.resultRequest == request) {
+			updateUpload.resultRequest = NULL;
+		}
+	});
+	return true;
+}
+
+// Writes one chunk of the firmware to the other app slot. For a raw body, done is index + len >= total
+// and total is the firmware's size; for a multipart file part, the upload callback's final flag says
+// done and the size isn't known, so 0 is passed to otaBegin().
+static void updateUploadWrite(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total, bool done) {
+	if (index == 0 && !updateUploadStart(request, total)) {
+		return;
+	}
+	if (!updateUpload.active || updateUpload.request != request) {
+		return;	// The rest of a request that was rejected
+	}
+
+	if (len > 0 && !OTA::otaWrite(data, len)) {
+		updateUploadFinish(request, 500, OTA::otaError());
+		return;
+	}
+
+	if (done) {
+		if (OTA::otaEnd()) {
+			updateUploadFinish(request, 200, "Updated, restarting");
+		} else {
+			updateUploadFinish(request, 500, OTA::otaError());
+		}
+	}
+}
+
+// The multipart file field "firmware" from the web UI's Info page. Its size isn't known until the
+// part ends, so otaBegin() gets 0 (unknown) and the md5 query argument is the only check.
+static void updateUploadHandler(AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final) {
+	(void)filename;
+	updateUploadWrite(request, data, len, index, 0, final);
+}
+
+// A raw body, e.g. curl --data-binary @firmware.bin -H 'Content-Type: application/octet-stream'
+static void updateBodyHandler(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+	updateUploadWrite(request, data, len, index, total, index + len >= total);
+}
+
+/*
+ * POST /update sends the reply updateUploadWrite() left, once the whole body has arrived. The web UI
+ * login applies to it like any other page, see WebLoginHandler.
+ */
+static void updateHandler(AsyncWebServerRequest *request) {
+	if (updateUpload.resultRequest == request) {
+		updateUpload.resultRequest = NULL;
+		request->send(updateUpload.resultCode, "text/plain", updateUpload.resultMessage);
+	} else {
+		// No body, so the body handler never saw it
+		if (updateUpload.request == request) {
+			updateUpload.active = false;
+			updateUpload.request = NULL;
+			OTA::otaAbort("connection lost");
+		}
+		request->send(400, "text/plain", "no firmware in the request body");
+	}
 }
 
 static const char *const webLoginRealm = "IPS Clock";
@@ -1944,15 +2068,12 @@ void configureWebServer() {
 	server->on("/", HTTP_GET, mainHandler).setFilter(ON_STA_FILTER);
 	server->on("/custom", HTTP_GET | HTTP_POST, customHandler);
 	server->on("/panel", HTTP_GET | HTTP_POST, panelHandler, NULL, panelBodyHandler);
+	server->on("/update", HTTP_POST, updateHandler, updateUploadHandler, updateBodyHandler);
 	server->on("/t", HTTP_POST, timeHandler).setFilter(ON_AP_FILTER);
 	server->on("/upload_face", HTTP_POST, handleUploadDone, handleUpload);
 	// A wildcard rather than a regex because std::regex adds well over 100K to the image
 	server->on(DELETE_FACE_URL "*", HTTP_DELETE, handleDelete);
 	server->serveStatic("/assets", LittleFS, "/assets");
-	
-#ifdef OTA
-	otaUpdater.init(server, "/update", sendUpdateForm, sendUpdatingInfo);
-#endif
 
 	// attach AsyncWebSocket
 	ws->onEvent(wsHandler);

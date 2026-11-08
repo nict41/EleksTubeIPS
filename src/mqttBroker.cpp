@@ -6,11 +6,15 @@
 #include <EEPROMConfig.h>
 #include <LittleFS.h>
 
+#include <HTTPClient.h>
+#include <WiFiClient.h>
+
 #include "ScreenSaver.h"
 #include "Backlights.h"
 #include "mqttBroker.h"
 #include "IPSClock.h"
 #include "TFTs.h"
+#include "OTA.h"
 
 extern AsyncWiFiManager *wifiManager;
 extern CompositeConfigItem rootConfig;
@@ -168,6 +172,10 @@ void MQTTBroker::onConnect(bool sessionPresent)
     strcat(topic, "/files/+/+/+");
     client.subscribe(topic, 0);
 
+    strcpy(topic, home);
+    strcat(topic, "/ota/latest");
+    client.subscribe(topic, 0);
+
     // Discovery needs a lot of memory so let the clock task do it, see sendHADiscoveryMessage()
     requestMqttDiscovery();
 }
@@ -287,6 +295,13 @@ void MQTTBroker::onMessage(const espMqttClientTypes::MessageProperties& properti
             if (!properties.retain) {
                 config.commit();
                 ESP.restart();
+            }
+        } else if (strcmp(topic + topicIndex, otaLatestSub + 1) == 0) {
+            onOtaLatest((const char*)mqttMessageBuffer);
+        } else if (strcmp(topic + topicIndex, otaInstallTopicName + 1) == 0) {
+            // A retained install message would be redelivered on every connect, causing an update loop
+            if (!properties.retain && strcmp((const char*)mqttMessageBuffer, "install") == 0) {
+                startOtaInstall();
             }
         } else if (strcmp(topic + topicIndex, screenSaverModeTopic + 1) == 0) {
             setConfigItem(ScreenSaver::getScreenSaver(), (const char*)mqttMessageBuffer);
@@ -492,6 +507,14 @@ bool MQTTBroker::init(const String& id) {
         sprintf(persistentStateTopic, "clock/%s/persistent/state", id.c_str());
         sprintf(availabilityTopic, "clock/%s/availability", id.c_str());
         sprintf(fileStatusTopic, "clock/%s/files/status", id.c_str());
+        sprintf(otaStateTopic, "clock/%s/ota/state", id.c_str());
+
+        otaVersion[0] = 0;
+        otaUrl[0] = 0;
+        otaMd5[0] = 0;
+        otaReleaseUrl[0] = 0;
+        otaTitle[0] = 0;
+        otaLatestReceived = false;
 
         client.setServer(getHost().value.c_str(), getPort());
         client.setCredentials(getUser().value.c_str(),getPassword().value.c_str());
@@ -527,6 +550,13 @@ void MQTTBroker::checkConnection() {
             lastPanelTubes = panelTubes;
             lastPanelsNeeded = panelsNeeded;
             requestMqttPublish();
+        }
+
+        // The update's percentage changes while it runs, so publish the OTA state again, at most
+        // once a second like the rest of the state
+        if (OTA::otaBusy() && millis() - lastOtaStatePublish >= 1000) {
+            lastOtaStatePublish = millis();
+            publishOtaState();
         }
     }
 }
@@ -585,6 +615,8 @@ bool MQTTBroker::publishState() {
             // Serial.println("Gave up waiting for memory semaphore");
             return false;
         }
+
+        publishOtaState();
     }
 
     return true;
@@ -710,6 +742,18 @@ bool MQTTBroker::sendHADiscoveryMessage() {
     doc["ent_cat"] = "config";
 
     publishDiscovery("button", "restart", doc);
+
+    // Home Assistant's update entity, fed by clock/<id>/ota/state and clock/<id>/set/ota_install
+    doc["name"] = "Firmware";
+    doc["cmd_t"] = otaInstallTopicName;
+    doc["stat_t"] = otaStateTopic;
+    doc["payload_install"] = "install";
+    doc["dev_cla"] = "firmware";
+    doc["ent_cat"] = "config";
+    // No templates: Home Assistant reads installed_version, latest_version, title, release_url,
+    // in_progress and update_percentage straight from the JSON on the state topic
+
+    publishDiscovery("update", "firmware", doc, "firmware_");
 
     for (const FileSet &fileSet : fileSets) {
         sendFileDiscovery(fileSet.dir);
@@ -859,4 +903,166 @@ void MQTTBroker::publishDiscovery(const char *component, const char *objectId, J
     // it is online once it has started, too late for automations that run at startup. An empty
     // retained message removes the entity from the broker as well.
     client.publish(discoveryTopic, 0, true, payload.c_str());
+}
+
+// Copies a JSON string into a fixed buffer, ignoring it when it doesn't fit
+static void copyOtaField(char *dest, size_t destSize, JsonVariant value) {
+    if (value.isNull()) {
+        dest[0] = 0;
+        return;
+    }
+    const char *s = value.as<const char*>();
+    if (s == 0 || strlen(s) >= destSize) {
+        dest[0] = 0;
+        return;
+    }
+    strcpy(dest, s);
+}
+
+/*
+ * A retained message on clock/<id>/ota/latest, published by a Home Assistant app, says what the
+ * newest release is:
+ * {"version":"2.2.0-nt1","url":"http://.../firmware-ipstube.bin","md5":"<32 hex>","release_url":"...","title":"..."}
+ * Only http:// URLs are accepted, TLS needs more memory than the clock has free.
+ */
+void MQTTBroker::onOtaLatest(const char *payload) {
+    JsonDocument doc;
+    if (deserializeJson(doc, payload) != DeserializationError::Ok) {
+        return;
+    }
+
+    char url[128];
+    copyOtaField(url, sizeof(url), doc["url"]);
+    bool urlOk = strncmp(url, "http://", 7) == 0;
+
+    copyOtaField(otaVersion, sizeof(otaVersion), doc["version"]);
+    copyOtaField(otaUrl, sizeof(otaUrl), urlOk ? doc["url"] : doc["no_such_field"]);
+    copyOtaField(otaMd5, sizeof(otaMd5), doc["md5"]);
+    copyOtaField(otaReleaseUrl, sizeof(otaReleaseUrl), doc["release_url"]);
+    copyOtaField(otaTitle, sizeof(otaTitle), doc["title"]);
+    otaLatestReceived = true;
+
+    publishOtaState();
+    requestMqttPublish();
+}
+
+// Publishes clock/<id>/ota/state, retained, for Home Assistant's update entity
+void MQTTBroker::publishOtaState() {
+    if (!client.connected()) {
+        return;
+    }
+
+    JsonDocument doc;
+    doc["installed_version"] = manifest[1];	// FIRMWARE_VERSION
+    doc["latest_version"] = otaLatestReceived && otaVersion[0] != 0 ? otaVersion : manifest[1];
+    doc["title"] = otaTitle;
+    doc["release_url"] = otaReleaseUrl;
+    doc["in_progress"] = OTA::otaBusy() || OTA::otaRestartPending();
+    int percent = OTA::otaPercentage();
+    if (OTA::otaBusy() && percent >= 0) {
+        doc["update_percentage"] = percent;
+    } else {
+        doc["update_percentage"] = nullptr;
+    }
+
+    char buffer[384];
+    serializeJson(doc, buffer);
+    client.publish(otaStateTopic, 1, true, buffer);
+}
+
+// The firmware image for startOtaInstall(), copied before the task starts
+struct OtaDownload {
+    char url[128];
+    char md5[33];
+};
+
+// Downloads the firmware over HTTP and streams it into the other app slot. Runs on its own task
+// because the download takes minutes and the MQTT callback must return quickly.
+static void otaDownloadTask(void *param) {
+    OtaDownload *download = (OtaDownload*)param;
+
+    WiFiClient wifiClient;
+    HTTPClient http;
+    http.begin(wifiClient, download->url);
+    http.setTimeout(15000);	// ms, for each read
+    int httpCode = http.GET();
+    if (httpCode != HTTP_CODE_OK) {
+        OTA::otaAbort(httpCode == HTTP_CODE_NOT_FOUND ? "download: not found" : "download failed");
+        http.end();
+        delete download;
+        vTaskDelete(NULL);
+        return;
+    }
+
+    int size = http.getSize();	// -1 when the server didn't say
+    if (!OTA::otaBegin(size > 0 ? (size_t)size : 0, download->md5)) {
+        http.end();
+        delete download;
+        vTaskDelete(NULL);
+        return;
+    }
+
+    WiFiClient *stream = http.getStreamPtr();
+    uint8_t buffer[1024];
+    uint32_t lastData = millis();
+    size_t remaining = size > 0 ? (size_t)size : SIZE_MAX;	// SIZE_MAX: read until the server closes
+    bool failed = false;
+    while (remaining > 0 && !failed) {
+        size_t available = stream->available();
+        if (available > 0) {
+            size_t toRead = available < sizeof(buffer) ? available : sizeof(buffer);
+            if (toRead > remaining) {
+                toRead = remaining;
+            }
+            size_t read = stream->readBytes(buffer, toRead);
+            if (read == 0 || !OTA::otaWrite(buffer, read)) {
+                failed = true;	// otaWrite() has already recorded the error
+                if (read == 0) {
+                    OTA::otaAbort("download: read failed");
+                }
+            } else {
+                lastData = millis();
+                if (remaining != SIZE_MAX) {
+                    remaining -= read;
+                }
+            }
+        } else if (!stream->connected()) {
+            break;	// Closed by the server: complete when the size was unknown, else otaEnd() fails it
+        } else if (millis() - lastData >= 15000) {
+            OTA::otaAbort("download stalled");
+            failed = true;
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+    }
+
+    if (!failed) {
+        OTA::otaEnd();
+    }
+    http.end();
+    delete download;
+    vTaskDelete(NULL);
+}
+
+// Starts the download of the latest release on its own task, so the MQTT callback can return
+void MQTTBroker::startOtaInstall() {
+    if (otaUrl[0] == 0) {
+        return;	// No ota/latest message with a URL yet
+    }
+    if (!OTA::otaAvailable() || OTA::otaBusy()) {
+        return;
+    }
+
+    OtaDownload *download = new OtaDownload();
+    if (download == NULL) {
+        return;
+    }
+    strncpy(download->url, otaUrl, sizeof(download->url) - 1);
+    download->url[sizeof(download->url) - 1] = 0;
+    strncpy(download->md5, otaMd5, sizeof(download->md5) - 1);
+    download->md5[sizeof(download->md5) - 1] = 0;
+
+    if (xTaskCreate(otaDownloadTask, "OTA download", 8192, download, 1, NULL) != pdPASS) {
+        delete download;
+    }
 }

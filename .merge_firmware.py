@@ -6,10 +6,22 @@ FS_BIN = os.path.join("$BUILD_DIR", "${ESP32_FS_IMAGE_NAME}.bin")
 MERGED_BIN = os.path.join("$BUILD_DIR", "${PROGNAME}_merged.bin")
 BOARD_CONFIG = env.BoardConfig()
 
+def fs_offset():
+    # The filesystem partition's offset in the env's partition table, e.g. 0x180000 for the 4 MB
+    # clocks and 0x410000 for the 8 MB ones
+    partitions = env.GetProjectOption("board_build.partitions")
+    path = os.path.join(env["PROJECT_DIR"], partitions)
+    with open(path) as f:
+        for line in f:
+            fields = [field.strip() for field in line.split(",")]
+            if len(fields) >= 5 and fields[0] == "spiffs":
+                return fields[3]
+    raise Exception("No spiffs partition in " + path)
+
 def merge_bin(source, target, env):
     # The list contains all extra images (bootloader, partitions, eboot) and
     # the final application binary
-    flash_images = env.Flatten(env.get("FLASH_EXTRA_IMAGES", [])) + ["$ESP32_APP_OFFSET", APP_BIN] + ["0x180000", FS_BIN]
+    flash_images = env.Flatten(env.get("FLASH_EXTRA_IMAGES", [])) + ["$ESP32_APP_OFFSET", APP_BIN] + [fs_offset(), FS_BIN]
 
     # Run esptool to merge images into a single binary
     env.Execute(
