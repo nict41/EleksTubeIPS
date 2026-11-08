@@ -955,8 +955,13 @@ void MQTTBroker::publishOtaState() {
     JsonDocument doc;
     doc["installed_version"] = manifest[1];	// FIRMWARE_VERSION
     doc["latest_version"] = otaLatestReceived && otaVersion[0] != 0 ? otaVersion : manifest[1];
-    doc["title"] = otaTitle;
-    doc["release_url"] = otaReleaseUrl;
+    // Home Assistant rejects the whole message if release_url isn't a valid URL, so leave out empty ones
+    if (otaTitle[0] != 0) {
+        doc["title"] = otaTitle;
+    }
+    if (otaReleaseUrl[0] != 0) {
+        doc["release_url"] = otaReleaseUrl;
+    }
     doc["in_progress"] = OTA::otaBusy() || OTA::otaRestartPending();
     int percent = OTA::otaPercentage();
     if (OTA::otaBusy() && percent >= 0) {
