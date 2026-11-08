@@ -946,6 +946,16 @@ void MQTTBroker::onOtaLatest(const char *payload) {
     requestMqttPublish();
 }
 
+bool MQTTBroker::publishPanelButton() {
+    if (!client.connected()) {
+        return false;
+    }
+    char topic[64];
+    snprintf(topic, sizeof(topic), "%s/button", home);
+    client.publish(topic, 0, false, "next");
+    return true;
+}
+
 // Publishes clock/<id>/ota/state, retained, for Home Assistant's update entity
 void MQTTBroker::publishOtaState() {
     if (!client.connected()) {

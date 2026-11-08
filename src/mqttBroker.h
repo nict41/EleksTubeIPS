@@ -15,6 +15,8 @@ struct Setting;
 class MQTTBroker
 {
 public:
+    // Tells a Home Assistant app that the button was pressed while panels were showing: clock/<id>/button "next"
+    bool publishPanelButton();
     static StringConfigItem& getHost() { static StringConfigItem mqtt_host("mqtt_host", 25, ""); return mqtt_host; }
     static IntConfigItem& getPort() { static IntConfigItem mqtt_port("mqtt_port", 1883); return mqtt_port; }
     static StringConfigItem& getUser() { static StringConfigItem mqtt_user("mqtt_user", 25, ""); return mqtt_user; }

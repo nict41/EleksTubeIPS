@@ -627,6 +627,12 @@ void onButtonEvent(const Button *button, Button::Event evt) {
 				// ... or switching display modes. This *is* the mode button after all
 				IntConfigItem &dateOrTime = IPSClock::getTimeOrDate();
 
+				// Showing panels: the Home Assistant app moves on to its next screen instead, as long as MQTT
+				// is up to tell it. Its Display select (or the web UI) switches back to the clock.
+				if (dateOrTime.value == IPSClock::PANELS && mqttBroker->publishPanelButton()) {
+					return;
+				}
+
 				// PANELS is only chosen from the web UI or MQTT, so skip it
 				dateOrTime.value = (dateOrTime.value + 1) % (IPSClock::PANELS + 1);
 				if (dateOrTime.value == IPSClock::PANELS) {
@@ -651,6 +657,12 @@ void onButtonEvent(const Button *button, Button::Event evt) {
 #else
 		// If we only have the power button, it is more useful to cycle through the display modes
 		IntConfigItem &dateOrTime = IPSClock::getTimeOrDate();
+
+		// Showing panels: the Home Assistant app moves on to its next screen instead, as long as MQTT
+		// is up to tell it. Its Display select (or the web UI) switches back to the clock.
+		if (dateOrTime.value == IPSClock::PANELS && mqttBroker->publishPanelButton()) {
+			return;
+		}
 
 		// PANELS is only chosen from the web UI or MQTT, so skip it
 		dateOrTime.value = (dateOrTime.value + 1) % (IPSClock::PANELS + 1);
