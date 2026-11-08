@@ -10,11 +10,13 @@
 #include "Backlights.h"
 #include "mqttBroker.h"
 #include "IPSClock.h"
+#include "TFTs.h"
 
 extern AsyncWiFiManager *wifiManager;
 extern CompositeConfigItem rootConfig;
 extern EEPROMConfig config;
 extern ScreenSaver *screenSaver;
+extern TFTs *tfts;
 extern void broadcastUpdate(const BaseConfigItem&);
 extern void filesChanged(const String &dir, const String &name, bool uploaded);
 extern void requestMqttPublish();
@@ -29,6 +31,7 @@ IRAMPtrArray<const char*> MQTTBroker::displayStates {
     "Date",
     "Weather",
     "Slideshow",
+    "Panels",
     0
 };
 
@@ -38,7 +41,7 @@ static const char *const ledPatterns[] = { "Dark", "", "Constant", "Rainbow", "P
 // Values match IPSClock::Dimming
 static const char *const offHoursModes[] = { "Blank", "Dim", "Matrix", 0 };
 // Values match IPSClock::Display
-static const char *const digitCounts[] = { "Six", "Four AM/PM", "Four + Weather", "Four + Picture", 0 };
+static const char *const digitCounts[] = { "Six", "Four AM/PM", "Four + Weather", "Four + Picture", "Four + Panel", 0 };
 // Values match IPSClock::DateFormat
 static const char *const dateFormats[] = { "DD-MM-YY", "MM-DD-YY", "YY-MM-DD", 0 };
 // The web UI's choices
@@ -236,7 +239,7 @@ void MQTTBroker::onMessage(const espMqttClientTypes::MessageProperties& properti
         } else if (strcmp(topic + topicIndex, brightnessTopic + 1) == 0) {
             setConfigNumber(IPSClock::getBrightnessConfig(), (const char*)mqttMessageBuffer, 10, 255);
         } else if (strcmp(topic + topicIndex, displayTopic + 1) == 0) {
-            setConfigNumber(IPSClock::getTimeOrDate(), (const char*)mqttMessageBuffer, IPSClock::TIME, IPSClock::SLIDE_SHOW);
+            setConfigNumber(IPSClock::getTimeOrDate(), (const char*)mqttMessageBuffer, IPSClock::TIME, IPSClock::PANELS);
         } else if (strcmp(topic + topicIndex, customDataTopic + 1) == 0) {
             IPSClock::setCustomData((const char*)mqttMessageBuffer);	// Ignored if it is too long
         } else if (strcmp(topic + topicIndex, backlightStateTopic + 1) == 0) {
@@ -513,6 +516,19 @@ void MQTTBroker::checkConnection() {
         lastReconnect = millis();
         connect();
     }
+
+    // The clock task turns a panel tube black when it needs a picture, and the web server task clears
+    // the flag when one arrives over /panel, so watch the masks here and publish again when either
+    // changes. Called every loop, so the state goes out within about a second.
+    if (client.connected()) {
+        uint8_t panelTubes = tfts->getPanelTubes();
+        uint8_t panelsNeeded = tfts->getPanelsNeeded();
+        if (panelTubes != lastPanelTubes || panelsNeeded != lastPanelsNeeded) {
+            lastPanelTubes = panelTubes;
+            lastPanelsNeeded = panelsNeeded;
+            requestMqttPublish();
+        }
+    }
 }
 
 // Returns false if the state couldn't be published right now and should be tried again later
@@ -532,6 +548,9 @@ bool MQTTBroker::publishState() {
             volatileState["brightness"] = IPSClock::getBrightnessConfig().value;
             volatileState["custom"] = IPSClock::getCustomData().value;
             volatileState["display"] = IPSClock::getTimeOrDate().value;
+            // Bit i set when tube i (left to right) shows a streamed picture, and when it needs one
+            volatileState["panel_tubes"] = tfts->getPanelTubes();
+            volatileState["panels_needed"] = tfts->getPanelsNeeded();
 
             volatileState["backlight_state"] = Backlights::backlightState ? "ON" : "OFF";
             JsonArray blArray = volatileState["backlight_hs"].to<JsonArray>();
@@ -671,8 +690,8 @@ bool MQTTBroker::sendHADiscoveryMessage() {
 
     doc["cmd_t"] = displayTopic;
     doc["stat_t"] = volatileStateTopic;
-    doc["val_tpl"] = "{% if value_json.display == 0 %}Time{% elif value_json.display == 1 %}Date{% elif value_json.display == 2 %}Weather{% elif value_json.display == 3 %}Slideshow{% endif %}";
-    doc["command_template"] = "{% if value == 'Time' %}0{% elif value == 'Date' %}1{% elif value == 'Weather' %}2{% elif value == 'Slideshow' %}3{% endif %}";
+    doc["val_tpl"] = "{% if value_json.display == 0 %}Time{% elif value_json.display == 1 %}Date{% elif value_json.display == 2 %}Weather{% elif value_json.display == 3 %}Slideshow{% elif value_json.display == 4 %}Panels{% endif %}";
+    doc["command_template"] = "{% if value == 'Time' %}0{% elif value == 'Date' %}1{% elif value == 'Weather' %}2{% elif value == 'Slideshow' %}3{% elif value == 'Panels' %}4{% endif %}";
 
     JsonArray optArray = doc["options"].to<JsonArray>();
     for (int i = 0; displayStates[i] != 0; i++) {

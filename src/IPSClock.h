@@ -14,7 +14,8 @@ public:
         TIME = 0,
         DATE,
         WEATHER,
-        SLIDE_SHOW
+        SLIDE_SHOW,
+        PANELS	// All six tubes show pictures streamed over HTTP, see /panel
     };
 
     enum Dimming {
@@ -33,7 +34,8 @@ public:
         SIX = 0,
         FOUR,
         FOUR_WITH_WEATHER,
-        FOUR_WITH_SLIDESHOW
+        FOUR_WITH_SLIDESHOW,
+        FOUR_WITH_PANEL	// Like FOUR_WITH_WEATHER, but the last tube shows a streamed picture
     };
 
     IPSClock();

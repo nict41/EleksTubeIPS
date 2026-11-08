@@ -51,6 +51,8 @@ public:
   static ByteConfigItem& getFx() { static ByteConfigItem fx("fx", TINT); return fx; }
 #endif
   static const char* INVALID_DIGIT;
+  // The "digit" a panel tube shows: not a file, but a picture streamed over HTTP, see /panel
+  static const char* PANEL_DIGIT;
 
   void claim();
   void release();
@@ -68,6 +70,18 @@ public:
   void showDigit(uint8_t digit);
   TFT_eSprite& drawImage(uint8_t digit);
   StaticSprite& getSprite();
+
+  // Panel tubes, whose pictures come over HTTP rather than from files. Panel 0..5 is the tube
+  // left to right, i.e. HOURS_TENS..SECONDS_ONES, the same order as the DIGITS array in IPSClock.cpp.
+  static uint8_t panelToDigit(uint8_t panel);   // The digit constant of a panel index
+  bool isPanelTube(uint8_t panel);              // True when that tube is showing a panel picture
+  uint8_t getPanelTubes();                      // Bit i set when panel i is a panel tube
+  uint8_t getPanelsNeeded();                    // Bit i set when panel i needs a fresh picture
+  void clearPanelNeeded(uint8_t panel);
+  // Draws h full rows of w pixels at (x, y) on a panel tube. rgb565be holds w*h pixels in RGB565,
+  // big-endian (high byte first), row by row.
+  void drawPanelRows(uint8_t panel, int16_t x, int16_t y, int16_t w, int16_t h, const uint8_t *rgb565be);
+  void drawStatus();                            // Draws the status message on the selected tube, if any
 
   void animateRain();
 
@@ -106,7 +120,6 @@ private:
 #else
   DigitalRainAnimation& getMatrixAnimator();
 #endif
-  void drawStatus();
 
   byte showDigits = 0;
   image_justification_t imageJustification = MIDDLE_CENTER;
@@ -114,6 +127,10 @@ private:
   uint16_t boxHeight = TFT_HEIGHT;
   uint8_t dimming = 255; // amount of dimming graphics
   int monochromeColor = -1;
+
+  // Bit i set when panel tube i needs a fresh picture. Touched from the clock task and the web
+  // server task, so only changed while holding the mutex, see claim()/release().
+  volatile uint8_t panelsNeeded = 0;
 
   unsigned long statusTime = 0;
   unsigned long statusDuration = 5000;

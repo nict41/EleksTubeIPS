@@ -60,6 +60,10 @@ private:
 
     bool deviceDescribed = false;   // Whether this round of discovery messages has described the device yet
 
+    // The panel masks last seen, so a change made by the clock task is published too, see checkConnection()
+    uint8_t lastPanelTubes = 0;
+    uint8_t lastPanelsNeeded = 0;
+
     const char* screenSaverTopic = "~/set/screen_saver";
     const char* brightnessTopic = "~/set/brightness";
     // Not ~/set/screen_saver, the config item's name, because the screen saver switch already uses that

@@ -185,6 +185,9 @@ void IPSClock::loop() {
                         tfts->setShowDigits(SLIDE_SHOW);
                         tfts->setDigit(SECONDS_ONES, digitToName[random(10)], TFTs::yes);
                         tfts->setShowDigits(TIME);
+                    } else if (getFourDigitDisplay() == FOUR_WITH_PANEL) {
+                        // The last tube shows a picture streamed over HTTP instead of the seconds
+                        tfts->setDigit(SECONDS_ONES, TFTs::PANEL_DIGIT, TFTs::yes);
                     }
                     tfts->setDigit(SECONDS_TENS, digitToName[now.tm_min % 10], TFTs::yes);
                     tfts->setDigit(MINUTES_ONES, digitToName[now.tm_min / 10], TFTs::yes);
@@ -247,6 +250,19 @@ void IPSClock::loop() {
                 }
                 if (now.tm_sec % 10 == 0) {
                     tfts->setDigit(random(6), digitToName[random(10)], TFTs::yes);
+                }
+            } else if (getTimeOrDate().value == PANELS) {
+                // All six tubes are panel tubes, showing pictures streamed over HTTP, see /panel
+                uint8_t DIGITS[NUM_DIGITS] = {
+                    HOURS_TENS,
+                    HOURS_ONES,
+                    MINUTES_TENS,
+                    MINUTES_ONES,
+                    SECONDS_TENS,
+                    SECONDS_ONES
+                };
+                for (uint8_t i = 0; i < NUM_DIGITS; i++) {
+                    tfts->setDigit(DIGITS[i], TFTs::PANEL_DIGIT, TFTs::yes);
                 }
             } else {
                 Serial.println("Bad display state for clock");

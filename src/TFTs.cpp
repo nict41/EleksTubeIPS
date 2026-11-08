@@ -56,6 +56,7 @@
 
 SemaphoreHandle_t TFTs::tftMutex = 0;
 const char *TFTs::INVALID_DIGIT = "nosuchfile";
+const char *TFTs::PANEL_DIGIT = "panel";
 
 uint8_t StaticSprite::output_buffer[(TFT_HEIGHT * TFT_WIDTH + 1) * sizeof(uint16_t)];
 
@@ -607,24 +608,140 @@ void TFTs::clear() {
   enableAllDisplays();
 }
 
+// Panel 0..5 is the tube left to right, the same order as the DIGITS array in IPSClock.cpp
+uint8_t TFTs::panelToDigit(uint8_t panel) {
+  static const uint8_t panelDigits[NUM_DIGITS] = {
+    HOURS_TENS,
+    HOURS_ONES,
+    MINUTES_TENS,
+    MINUTES_ONES,
+    SECONDS_TENS,
+    SECONDS_ONES
+  };
+
+  return panel < NUM_DIGITS ? panelDigits[panel] : HOURS_TENS;
+}
+
+// The inverse of panelToDigit()
+static uint8_t digitToPanel(uint8_t digit) {
+  for (uint8_t panel = 0; panel < NUM_DIGITS; panel++) {
+    if (TFTs::panelToDigit(panel) == digit) {
+      return panel;
+    }
+  }
+
+  return 0;
+}
+
 void TFTs::setDigit(uint8_t digit, const char *name, show_t show) {
   bool changed = strcmp(icons[digit], name) != 0;
   strcpy(icons[digit], name);
-  
+
+  if (strcmp(name, PANEL_DIGIT) != 0) {
+    // Not a panel tube any more, so it doesn't need a picture
+    claim();
+    panelsNeeded &= (uint8_t)~(1 << digitToPanel(digit));
+    release();
+  }
+
   if (show != no && (changed || show == force)) {
     showDigit(digit);
   }
 }
 
-/* 
- * Displays the bitmap for the value to the given digit. 
+bool TFTs::isPanelTube(uint8_t panel) {
+  return panel < NUM_DIGITS && strcmp(icons[panelToDigit(panel)], PANEL_DIGIT) == 0;
+}
+
+uint8_t TFTs::getPanelTubes() {
+  claim();
+  uint8_t tubes = 0;
+  for (uint8_t panel = 0; panel < NUM_DIGITS; panel++) {
+    if (strcmp(icons[panelToDigit(panel)], PANEL_DIGIT) == 0) {
+      tubes |= (uint8_t)(1 << panel);
+    }
+  }
+  release();
+
+  return tubes;
+}
+
+uint8_t TFTs::getPanelsNeeded() {
+  claim();
+  uint8_t needed = panelsNeeded;
+  release();
+
+  return needed;
+}
+
+void TFTs::clearPanelNeeded(uint8_t panel) {
+  if (panel >= NUM_DIGITS) {
+    return;
+  }
+
+  claim();
+  panelsNeeded &= (uint8_t)~(1 << panel);
+  release();
+}
+
+/*
+ * Draws h full rows of w pixels at (x, y) on a panel tube. The pixels are RGB565, big-endian
+ * (high byte first), row by row, as sent to /panel. Unlike drawImage() this doesn't use the
+ * shared sprite, so the web server task can call it while the clock task is drawing.
+ */
+void TFTs::drawPanelRows(uint8_t panel, int16_t x, int16_t y, int16_t w, int16_t h, const uint8_t *rgb565be) {
+  if (panel >= NUM_DIGITS || w <= 0 || h <= 0 || rgb565be == NULL) {
+    return;
+  }
+
+  uint16_t row[TFT_WIDTH];  // One row at a time, dimmed like the images loaded from files are
+
+  claim();
+#ifdef USE_DMA
+  while(dmaBusy()) {
+    delay(1);
+  }
+#endif
+  chip_select.setDigit(panelToDigit(panel));
+
+  // Like LoadImageBytesIntoSprite(): native uint16_t pixels with swap on send the high byte first
+  bool oldSwapBytes = getSwapBytes();
+  setSwapBytes(true);
+
+  for (int16_t r = 0; r < h; r++) {
+    const uint8_t *src = rgb565be + (size_t)r * w * 2;
+    for (int16_t col = 0; col < w; col++) {
+      row[col] = dimColor((uint16_t)((src[col * 2] << 8) | src[col * 2 + 1]));
+    }
+    pushImage(x, y + r, w, 1, row);
+  }
+
+  setSwapBytes(oldSwapBytes);
+  release();
+}
+
+/*
+ * Displays the bitmap for the value to the given digit.
  */
 void TFTs::showDigit(uint8_t digit) {
   if (!enabled) {
     return;
   }
 
-  if (*icons[digit] == 0) {
+  if (strcmp(icons[digit], PANEL_DIGIT) == 0) {
+    // A panel tube: black until a picture arrives over HTTP, see /panel
+#ifdef USE_DMA
+    while(dmaBusy()) {
+      delay(1);
+    }
+#endif
+    chip_select.setDigit(digit);
+    fillScreen(TFT_BLACK);
+    drawStatus();
+    claim();
+    panelsNeeded |= (uint8_t)(1 << digitToPanel(digit));
+    release();
+  } else if (*icons[digit] == 0) {
 #ifdef USE_DMA
     while(dmaBusy()) {
       delay(1);

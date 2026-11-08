@@ -626,7 +626,11 @@ void onButtonEvent(const Button *button, Button::Event evt) {
 				// ... or switching display modes. This *is* the mode button after all
 				IntConfigItem &dateOrTime = IPSClock::getTimeOrDate();
 
-				dateOrTime.value = (dateOrTime.value + 1) % 4;
+				// PANELS is only chosen from the web UI or MQTT, so skip it
+				dateOrTime.value = (dateOrTime.value + 1) % (IPSClock::PANELS + 1);
+				if (dateOrTime.value == IPSClock::PANELS) {
+					dateOrTime.value = IPSClock::TIME;
+				}
 				dateOrTime.put();
 				broadcastUpdate(dateOrTime);
 				dateOrTime.notify();
@@ -647,7 +651,11 @@ void onButtonEvent(const Button *button, Button::Event evt) {
 		// If we only have the power button, it is more useful to cycle through the display modes
 		IntConfigItem &dateOrTime = IPSClock::getTimeOrDate();
 
-		dateOrTime.value = (dateOrTime.value + 1) % 4;
+		// PANELS is only chosen from the web UI or MQTT, so skip it
+		dateOrTime.value = (dateOrTime.value + 1) % (IPSClock::PANELS + 1);
+		if (dateOrTime.value == IPSClock::PANELS) {
+			dateOrTime.value = IPSClock::TIME;
+		}
 		dateOrTime.put();
 		broadcastUpdate(dateOrTime);
 		dateOrTime.notify();
@@ -779,7 +787,9 @@ void updateDisplays() {
 				}
 				break;
 			case IPSClock::SLIDE_SHOW:
-				// drop through
+			// drop through
+			case IPSClock::PANELS:
+			// drop through, the panel tubes are drawn by ipsClock->loop() and fed over HTTP
 			default:
 				if (timeSync->initialized() || rtcTimeSync->initialized()) {
 					ipsClock->loop();
@@ -1505,6 +1515,215 @@ void customHandler(AsyncWebServerRequest *request) {
 	request->send(200, "text/plain", IPSClock::getCustomData().value + "\n");
 }
 
+// Rows drawn per drawPanelRows() call while streaming a picture to a panel tube, so the buffer
+// stays small and the whole picture is never held in memory
+#define PANEL_ROWS_PER_CALL 4
+
+// The /panel upload in progress. ESPAsyncWebServer calls the body handler as the body arrives and the
+// request handler only once all of it has, so the body handler checks the request and draws, and the
+// request handler sends the reply it left in result. Both run on the web server's task, and only one
+// upload is allowed at a time, so this needs no lock of its own.
+struct PanelUpload {
+	AsyncWebServerRequest *request = NULL;	// The upload being drawn
+	bool active = false;
+	uint8_t tube = 0;
+	int16_t x = 0, y = 0, w = TFT_WIDTH, h = TFT_HEIGHT;
+	size_t expected = 0;	// w * h * 2, the body length that was asked for
+	size_t received = 0;	// Body bytes taken so far
+	uint16_t rowBytes = 0;	// Bytes of the current row already in row[]
+	int16_t drawnRows = 0;	// Rows already sent to the display
+	uint8_t rowCount = 0;	// Complete rows waiting in rows[]
+	uint8_t row[TFT_WIDTH * 2];
+	uint8_t rows[PANEL_ROWS_PER_CALL * TFT_WIDTH * 2];
+
+	AsyncWebServerRequest *resultRequest = NULL;	// The request the reply below is for
+	int resultCode = 0;
+	const char *resultMessage = "";
+};
+static PanelUpload panelUpload;
+
+// Leaves the reply for the request handler and makes the state ready for the next upload
+static void panelUploadFinish(AsyncWebServerRequest *request, int code, const char *message) {
+	if (panelUpload.request == request) {
+		panelUpload.active = false;
+		panelUpload.request = NULL;
+	}
+	panelUpload.resultRequest = request;
+	panelUpload.resultCode = code;
+	panelUpload.resultMessage = message;
+}
+
+// Sends the complete rows waiting in panelUpload.rows[] to the tube
+static void panelUploadFlushRows() {
+	if (panelUpload.rowCount == 0) {
+		return;
+	}
+
+	tfts->drawPanelRows(panelUpload.tube, panelUpload.x, panelUpload.y + panelUpload.drawnRows,
+		panelUpload.w, panelUpload.rowCount, panelUpload.rows);
+	panelUpload.drawnRows += panelUpload.rowCount;
+	panelUpload.rowCount = 0;
+}
+
+// Checks a new upload's arguments when its first body bytes arrive. Returns false, with the reply
+// left for the request handler, if it can't be drawn.
+static bool panelUploadStart(AsyncWebServerRequest *request, size_t total) {
+	// Defaults: the whole tube
+	int tube = request->hasArg("tube") ? request->arg("tube").toInt() : 0;
+	int x = request->hasArg("x") ? request->arg("x").toInt() : 0;
+	int y = request->hasArg("y") ? request->arg("y").toInt() : 0;
+	int w = request->hasArg("w") ? request->arg("w").toInt() : TFT_WIDTH;
+	int h = request->hasArg("h") ? request->arg("h").toInt() : TFT_HEIGHT;
+
+	if (tube < 0 || tube >= NUM_DIGITS) {
+		panelUploadFinish(request, 400, "tube must be 0 to 5");
+		return false;
+	}
+	if (w <= 0 || h <= 0 || x < 0 || y < 0 || w > TFT_WIDTH || h > TFT_HEIGHT || x > TFT_WIDTH - w || y > TFT_HEIGHT - h) {
+		panelUploadFinish(request, 400, "rectangle must be inside the tube");
+		return false;
+	}
+	size_t expected = (size_t)w * h * 2;
+	if (total != expected) {
+		panelUploadFinish(request, 400, "body length must be w*h*2");
+		return false;
+	}
+	if (!tfts->isPanelTube((uint8_t)tube)) {
+		panelUploadFinish(request, 409, "not a panel tube");
+		return false;
+	}
+	if (panelUpload.active) {
+		panelUploadFinish(request, 503, "another panel upload is in progress");
+		return false;
+	}
+
+	panelUpload.request = request;
+	panelUpload.active = true;
+	panelUpload.tube = (uint8_t)tube;
+	panelUpload.x = (int16_t)x;
+	panelUpload.y = (int16_t)y;
+	panelUpload.w = (int16_t)w;
+	panelUpload.h = (int16_t)h;
+	panelUpload.expected = expected;
+	panelUpload.received = 0;
+	panelUpload.rowBytes = 0;
+	panelUpload.drawnRows = 0;
+	panelUpload.rowCount = 0;
+	request->onDisconnect([request]() {
+		// Aborted part way through, so the tube still needs a fresh picture
+		if (panelUpload.request == request) {
+			panelUpload.active = false;
+			panelUpload.request = NULL;
+		}
+		if (panelUpload.resultRequest == request) {
+			panelUpload.resultRequest = NULL;
+		}
+	});
+	return true;
+}
+
+/*
+ * Streams the body of POST /panel?tube=N[&x=X&y=Y&w=W&h=H] to a panel tube, row by row, so a
+ * whole-tube picture (64 KB) is never held in memory. The pixels are RGB565, big-endian, row by
+ * row, and the body must be exactly w*h*2 bytes. panelHandler() sends the reply.
+ */
+void panelBodyHandler(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+	if (index == 0 && !panelUploadStart(request, total)) {
+		return;
+	}
+	if (!panelUpload.active || panelUpload.request != request) {
+		return;	// The rest of a request that was rejected
+	}
+
+	size_t rowLen = (size_t)panelUpload.w * 2;
+	size_t offset = 0;
+	while (offset < len && panelUpload.received + offset < panelUpload.expected) {
+		size_t take = rowLen - panelUpload.rowBytes;
+		if (take > len - offset) {
+			take = len - offset;
+		}
+		memcpy(panelUpload.row + panelUpload.rowBytes, data + offset, take);
+		panelUpload.rowBytes += take;
+		offset += take;
+
+		if (panelUpload.rowBytes == rowLen) {
+			// A complete row: keep it with the others until there are enough to draw
+			memcpy(panelUpload.rows + (size_t)panelUpload.rowCount * rowLen, panelUpload.row, rowLen);
+			panelUpload.rowBytes = 0;
+			panelUpload.rowCount++;
+			if (panelUpload.rowCount == PANEL_ROWS_PER_CALL) {
+				panelUploadFlushRows();
+			}
+		}
+	}
+	panelUpload.received += len;
+
+	if (index + len >= total) {
+		if (panelUpload.received != panelUpload.expected) {
+			panelUploadFinish(request, 400, "body length must be w*h*2");
+			return;
+		}
+		panelUploadFlushRows();
+
+		if (panelUpload.x == 0 && panelUpload.y == 0 && panelUpload.w == TFT_WIDTH && panelUpload.h == TFT_HEIGHT) {
+			// The whole tube was replaced, so put the status message back on top of it and tell
+			// Home Assistant the tube has its picture now
+			tfts->claim();
+			tfts->chip_select.setDigit(TFTs::panelToDigit(panelUpload.tube));
+			tfts->drawStatus();
+			tfts->release();
+			tfts->clearPanelNeeded(panelUpload.tube);
+			requestMqttPublish();
+		}
+
+		panelUploadFinish(request, 200, "ok");
+	}
+}
+
+/*
+ * GET /panel replies which tubes are panel tubes and which of them need a fresh picture:
+ * {"tubes":[0,1,2],"needed":[3],"width":135,"height":240}
+ * POST /panel sends the reply panelBodyHandler() left, once the whole body has arrived. The web UI
+ * login applies to it like any other page, see WebLoginHandler.
+ */
+void panelHandler(AsyncWebServerRequest *request) {
+	if (request->method() == HTTP_POST) {
+		if (panelUpload.resultRequest == request) {
+			panelUpload.resultRequest = NULL;
+			request->send(panelUpload.resultCode, "text/plain", panelUpload.resultMessage);
+		} else {
+			// No body, so the body handler never saw it
+			if (panelUpload.request == request) {
+				panelUpload.active = false;
+				panelUpload.request = NULL;
+			}
+			request->send(400, "text/plain", "body length must be w*h*2");
+		}
+		return;
+	}
+
+	uint8_t tubes = tfts->getPanelTubes();
+	uint8_t needed = tfts->getPanelsNeeded();
+	String json = "{\"tubes\":[";
+	String sep = "";
+	for (uint8_t i = 0; i < NUM_DIGITS; i++) {
+		if (tubes & (1 << i)) {
+			json += sep + String(i);
+			sep = ",";
+		}
+	}
+	json += "],\"needed\":[";
+	sep = "";
+	for (uint8_t i = 0; i < NUM_DIGITS; i++) {
+		if (needed & (1 << i)) {
+			json += sep + String(i);
+			sep = ",";
+		}
+	}
+	json += "],\"width\":" + String(TFT_WIDTH) + ",\"height\":" + String(TFT_HEIGHT) + "}";
+	request->send(200, "application/json", json);
+}
+
 static const char *const webLoginRealm = "IPS Clock";
 
 // Never through the clock's own access point, which has a password of its own. That's how a forgotten
@@ -1724,6 +1943,7 @@ void configureWebServer() {
 	server->serveStatic("/", LittleFS, "/");
 	server->on("/", HTTP_GET, mainHandler).setFilter(ON_STA_FILTER);
 	server->on("/custom", HTTP_GET | HTTP_POST, customHandler);
+	server->on("/panel", HTTP_GET | HTTP_POST, panelHandler, NULL, panelBodyHandler);
 	server->on("/t", HTTP_POST, timeHandler).setFilter(ON_AP_FILTER);
 	server->on("/upload_face", HTTP_POST, handleUploadDone, handleUpload);
 	// A wildcard rather than a regex because std::regex adds well over 100K to the image
@@ -1747,6 +1967,8 @@ void setFace(const char *menuLabel) {
 		weather->getIconPack().fromString(menuLabel);
 	} else if (IPSClock::getTimeOrDate() == IPSClock::SLIDE_SHOW) {
 		slidesSet->fromString(menuLabel);
+	} else if (IPSClock::getTimeOrDate() == IPSClock::PANELS) {
+		// Panels have no file set, so there is nothing to choose
 	} else {
 		ipsClock->getClockFace().fromString(menuLabel);
 	}
@@ -1782,6 +2004,8 @@ void initFacesMenu() {
 		displayTitle = "Icons";
 	else if (display == IPSClock::SLIDE_SHOW)
 		displayTitle = "Slide Show";
+	else if (display == IPSClock::PANELS)
+		displayTitle = "Panels";
 
 	menu->setTitle(displayTitle);
 	eSPIMenu::Spec& itemSpec = menu->getItemSpec();
@@ -1804,7 +2028,7 @@ void initFacesMenu() {
 	else if (display == IPSClock::SLIDE_SHOW)
 		dirName += "slides";
 	else
-		dirName += "faces";
+		dirName += "faces";	// Also for PANELS, which has no file set of its own, so the menu does nothing
 
 	String current = ipsClock->getClockFace();
 	if (display == IPSClock::WEATHER)

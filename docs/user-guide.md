@@ -7,6 +7,7 @@ How to set up and use a clock running [this firmware](https://github.com/judge20
 * [The web UI](#the-web-ui): [Clock](#clock), [LEDs](#leds), [Files](#files), [Weather](#weather), [Screen Saver](#screen-saver), [MQTT](#mqtt-and-home-assistant), [Network](#network), [Info](#info)
 * [Clock buttons](#clock-buttons)
 * [Showing your own text](#showing-your-own-text)
+* [Showing pictures from Home Assistant (panels)](#showing-pictures-from-home-assistant-panels)
 * [Uploading files over MQTT](#uploading-files-over-mqtt)
 
 ## Connecting to Wi-Fi
@@ -66,13 +67,14 @@ There's no Save button. A change takes effect on the clock straight away, and th
 
 <img src="ui/clock.webp" alt="The Clock page" width="400">
 
-* **Display** chooses what the clock shows: the **Time**, the **Date**, the **Weather** forecast or a **Slide Show** of pictures. The clock's mode button does the same.
+* **Display** chooses what the clock shows: the **Time**, the **Date**, the **Weather** forecast, a **Slide Show** of pictures or **Panels**, pictures streamed to the displays over HTTP, see [Showing pictures from Home Assistant (panels)](#showing-pictures-from-home-assistant-panels). The clock's mode button cycles through the first four.
 * **Cycle Time, Date, Weather** shows each of the time, the date and the weather for this many seconds, then moves on to the next. 0 turns it off. The weather is skipped if there's no OpenWeatherMap API key. A slide show isn't part of the cycle, and gives way to the time.
 * **Number of Digits**, **12/24 Hour** and **Leading Zero** are shown when Display is Time:
   * **Six** shows hours, minutes and seconds.
   * **Four AM/PM** shows hours and minutes, a flashing colon, and AM or PM on the last display in 12-hour time.
   * **Four + Weather** shows today's forecast on the last display instead.
   * **Four + Picture** shows a picture from the slide show on the last display instead, changing every 10 seconds.
+  * **Four + Panel** shows a picture streamed over HTTP on the last display instead, see [Showing pictures from Home Assistant (panels)](#showing-pictures-from-home-assistant-panels).
   * **Leading Zero** shows a 0 before single-digit hours, such as 09:30 rather than 9:30.
 * **Date Format** is shown when Display is Date: DD-MM-YY, MM-DD-YY or YY-MM-DD.
 * **Display On** sets the hours the displays are on. Drag the two handles. In "7 - 23", the displays come on at 7:00 and go off at 23:00. If the two numbers are the same, the displays are always on.
@@ -158,7 +160,7 @@ Topics start with `clock/<id>`, where `<id>` is the clock's **MQTT ID** from the
 | Topic | Payload |
 |---|---|
 | `clock/<id>/set/brightness` | 10 to 255 |
-| `clock/<id>/set/display` | 0 for the time, 1 the date, 2 the weather, 3 the slide show |
+| `clock/<id>/set/display` | 0 for the time, 1 the date, 2 the weather, 3 the slide show, 4 panels |
 | `clock/<id>/set/screen_saver` | `ON` or `OFF` |
 | `clock/<id>/set/custom` | Up to six characters to show instead of the time, see [Showing your own text](#showing-your-own-text) |
 | `clock/<id>/set/backlight_state` | `ON` or `OFF` |
@@ -168,7 +170,7 @@ Topics start with `clock/<id>`, where `<id>` is the clock's **MQTT ID** from the
 
 IPSTube clocks have the same three topics for the underlight, such as `clock/<id>/set/underlight_hs`, though it's turned on and off together with the backlight. Every other setting has a topic too, which Home Assistant shows under the entity's **MQTT INFO**.
 
-The clock publishes its state on `clock/<id>/volatile/state` (brightness, display, screen saver, backlight and custom text) and `clock/<id>/persistent/state` (the settings, without passwords or the API key), and `online` or `offline` on `clock/<id>/availability`.
+The clock publishes its state on `clock/<id>/volatile/state` (brightness, display, screen saver, backlight, custom text and the panel tubes, `panel_tubes` and `panels_needed`, see [Showing pictures from Home Assistant (panels)](#showing-pictures-from-home-assistant-panels)) and `clock/<id>/persistent/state` (the settings, without passwords or the API key), and `online` or `offline` on `clock/<id>/availability`.
 
 ## Network
 
@@ -228,6 +230,40 @@ curl -d value=clear http://<clock>/custom
 ```
 
 `curl http://<clock>/custom` replies with the text being shown. If the web UI has a login, add it with `-u <user>:<password>`. Over MQTT, publish the text to `clock/<id>/set/custom`, see [MQTT and Home Assistant](#mqtt-and-home-assistant).
+
+## Showing pictures from Home Assistant (panels)
+
+With **Display** set to **Panels**, all six displays show pictures streamed to the clock over HTTP instead of the time. With **Number of Digits** set to **Four + Panel** while Display is Time, only the last display does, and the other four show the time as usual. The clock's mode button skips Panels, so choose it in the web UI or over MQTT (`clock/<id>/set/display` with 4).
+
+Send a picture to a tube with:
+
+```
+POST http://<clock>/panel?tube=N[&x=X&y=Y&w=W&h=H]
+```
+
+* `tube` is the display, 0 to 5 from left to right. Each is 135x240 pixels. Without `x`, `y`, `w` and `h`, the whole tube is replaced.
+* The body is the raw pixels: RGB565, big-endian (high byte first), row by row, so exactly `w*h*2` bytes. For a whole tube, 135*240*2 = 64800 bytes.
+
+The reply is `200 ok`, `400` if the arguments or the body length are wrong, `409` if that tube isn't a panel tube in the current mode, or `503` if another picture is being sent at the same time. If the web UI has a login, the request needs it too, like any other page: add `--digest -u <user>:<password>` with curl.
+
+`GET http://<clock>/panel` replies which tubes are panel tubes and which of them still need a picture:
+
+```json
+{"tubes":[0,1,2,3,4,5],"needed":[2],"width":135,"height":240}
+```
+
+Pictures are never stored, so after the screen saver, a status message, a restart or switching modes, a tube goes black and is listed in `needed` until a picture is sent to it again. Over MQTT, the same two lists are `panel_tubes` and `panels_needed` in `clock/<id>/volatile/state`, as numbers with bit 0 for the leftmost tube, so Home Assistant can watch `panels_needed` and send the pictures again.
+
+For example, with [tools/send_panel.py](../tools/send_panel.py), which needs Python 3 with Pillow and requests:
+
+```
+python3 tools/send_panel.py <clock-host> picture.jpg --tube 0
+python3 tools/send_panel.py <clock-host> panorama.jpg --strip
+python3 tools/send_panel.py <clock-host> picture.jpg --tube 0 --user <user> --password <password>
+python3 tools/send_panel.py <clock-host> --status
+```
+
+`--tube N` resizes and crops the image to fill the tube, and sends it there. `--strip` crops the image to fill all six tubes side by side (810x240), splits it into six and sends them to tubes 0 to 5 one after another. `--status` prints the `GET /panel` reply.
 
 ## Uploading files over MQTT
 

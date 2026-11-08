@@ -24,6 +24,8 @@
 					<label for="display_weather">Weather</label>
 					<input onchange="elementChange(this);setVisibility('time_container', this, ['0']);setVisibility('date_container', this, ['1']);" type="radio" name="time_or_date" id="display_slides" value="3">
 					<label for="display_slides">Slide Show</label>
+					<input onchange="elementChange(this);setVisibility('time_container', this, ['0']);setVisibility('date_container', this, ['1']);" type="radio" name="time_or_date" id="display_panels" value="4">
+					<label for="display_panels">Panels</label>
 				</fieldset>
 			</div>
 			<div class="clearFloats"></div>
@@ -44,6 +46,8 @@
 						<label for="four_digits_plus_weather">Four + Weather</label>
 						<input onchange="elementChange(this)" type="radio" name="four_digit_display" id="four_digits_plus_picture" value="3">
 						<label for="four_digits_plus_picture">Four + Picture</label>
+						<input onchange="elementChange(this)" type="radio" name="four_digit_display" id="four_digits_plus_panel" value="4">
+						<label for="four_digits_plus_panel">Four + Panel</label>
 					</fieldset>
 				</div>
 				<div class="clearFloats"></div>
