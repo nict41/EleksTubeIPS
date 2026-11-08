@@ -1,5 +1,11 @@
 # What's new #
-Write what's changed here before publishing this draft. Say whether installing only the firmware is enough, and whether going back to an earlier version keeps the clock's settings.
+The first release of **HA Tubes**, based on [EleksTubeIPS](https://github.com/judge2005/EleksTubeIPS) 2.1.6 by Paul Andrews.
+
+* **Panels:** each tube can show a 135x240 picture pushed from Home Assistant (`POST /panel`), in the new **Panels** and **Four + Panel** display modes. Use the [Tube Display](https://github.com/nict41/nict41-s-HA-Apps/tree/main/tube_display) Home Assistant app to design and rotate screens; in Panels mode the clock's button shows its next screen.
+* **Updates over Wi-Fi** on the 8 MB IPSTube clocks: the Info page, `curl --data-binary @firmware.bin http://<clock>/update`, or the Home Assistant **Firmware** update entity. `?target=fs` (or picking a `littlefs*.bin` on the Info page) updates the file system image too.
+* **A new web UI look:** HA Tubes theme in light and dark, a grouped menu, and new Panels and About pages.
+
+Clocks coming from EleksTubeIPS or an earlier HA Tubes build without two app slots need one **Full install** over USB (below). Settings and Wi-Fi details are kept; uploaded faces, icons and slides go back to the built-in ones.
 
 # Installation #
 The IPSTube clocks (H401/H402 and the hardware-dimming one) can now update themselves over Wi-Fi, see [Updating over Wi-Fi](https://github.com/nict41/HA-Tubes/blob/main/docs/user-guide.md#updating-over-wi-fi). The other clocks still can't, so flash them over USB. The easiest way is the [web installer]($installer$), which works in Chrome or Edge on a computer. The [installation guide](https://github.com/judge2005/EleksTubeIPS/wiki/Installation) covers connecting the clock and backing up its original firmware.
