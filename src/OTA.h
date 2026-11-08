@@ -24,7 +24,9 @@ bool otaAvailable();
 
 // size 0 means the total size isn't known yet (UPDATE_SIZE_UNKNOWN). md5 may be NULL or empty,
 // otherwise 32 hex characters. Only one update at a time: fails if one is already running.
-bool otaBegin(size_t size, const char *md5);
+// filesystem: write the LittleFS image (littlefs*.bin) instead of the firmware. Works on every clock,
+// as it needs no second app slot.
+bool otaBegin(size_t size, const char *md5, bool filesystem = false);
 bool otaWrite(const uint8_t *data, size_t len);
 // Finishes the update. On success the restart is pending, see otaLoop().
 bool otaEnd();

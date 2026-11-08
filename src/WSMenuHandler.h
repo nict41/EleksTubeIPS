@@ -19,6 +19,8 @@ public:
 	static const char* mqttMenu;
 	static const char* networkMenu;
 	static const char* infoMenu;
+	static const char* panelsMenu;
+	static const char* aboutMenu;
 
 private:
 	const char **items;

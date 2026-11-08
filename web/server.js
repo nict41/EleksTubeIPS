@@ -72,14 +72,16 @@ app.use('/delete_face/', function (req, res) {
 var pages = {
 		"type":"sv.init.menu",
 		"value": [
-			{"1": { "url" : "clock.html", "title" : "Clock" }},
-			{"2": { "url" : "leds.html", "title" : "LEDs" }},
-			{"3": { "url" : "faces.html", "title" : "Files" }},
-			{"7": { "url" : "weather.html", "title" : "Weather" }},
-			{"8": { "url" : "matrix.html", "title" : "Screen Saver" }},
-			{"4": { "url" : "mqtt.html", "title" : "MQTT" }},
-			{"6": { "url" : "network.html", "title" : "Network"}},
-			{"5": { "url" : "info.html", "title" : "Info" }}
+			{"1": { "url" : "clock.html", "title" : "Clock", "group" : "Display" }},
+			{"9": { "url" : "panels.html", "title" : "Panels", "group" : "Display" }},
+			{"8": { "url" : "matrix.html", "title" : "Screen Saver", "group" : "Display" }},
+			{"2": { "url" : "leds.html", "title" : "LEDs", "group" : "Display" }},
+			{"7": { "url" : "weather.html", "title" : "Weather", "group" : "Content" }},
+			{"3": { "url" : "faces.html", "title" : "Files", "group" : "Content" }},
+			{"6": { "url" : "network.html", "title" : "Network", "group" : "Connections" }},
+			{"4": { "url" : "mqtt.html", "title" : "MQTT", "group" : "Connections" }},
+			{"5": { "url" : "info.html", "title" : "Info", "group" : "System" }},
+			{"10": { "url" : "about.html", "title" : "About", "group" : "System" }}
 		]
 	}
 

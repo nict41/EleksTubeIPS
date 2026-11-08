@@ -1,0 +1,89 @@
+        <div data-role="page" id="Panels">
+            <link rel="stylesheet" href="/theme.css">
+            <script src="/theme.js"></script>
+            <div data-role="header" data-position="fixed">
+                <h1>Panels</h1>
+				<a href="#mainMenu" data-rel="main-menu-panel" class="ui-btn ui-btn-left ui-btn-icon-notext ui-icon-bars ui-corner-all"></a>
+			    <a href="https://github.com/nict41/HA-Tubes/blob/main/docs/user-guide.md#showing-pictures-from-home-assistant-panels" target="_blank" title="Help" class="ui-btn ui-btn-right ui-btn-icon-notext ui-icon-info ui-corner-all"></a>
+			    <a href="#" onclick="toggleTheme();return false;" title="Light or dark" class="ui-btn ui-btn-right ui-btn-icon-notext ui-icon-theme ui-corner-all"></a>
+            </div>
+            <div data-role="content">
+                <form action="/set_panels" method="POST" id="panels_form">
+					<p>With panels, each tube shows a full-screen picture sent to the clock from Home Assistant,
+					instead of a clock face. Each picture is 135x240 pixels, sent as raw RGB565 over HTTP.</p>
+					<p>Turn them on with <b>Display</b> set to <b>Panels</b> on the Clock page, so all six tubes
+					show pictures, or with <b>Number of Digits</b> set to <b>Four + Panel</b>, so only the last
+					tube does and the other four show the time as usual.</p>
+					<div class="clearFloats"></div>
+					<fieldset data-role="controlgroup" data-mini="true">
+						<legend>Status</legend>
+						<ul id="panel_status" data-role="listview" data-inset="true">
+							<li>Waiting for the clock...</li>
+						</ul>
+						<input type="button" value="Refresh" data-inline="true" data-mini="true" onclick="refreshPanels();"/>
+						<p class="hint">Tubes are numbered 1 to 6 from left to right here; the API below uses 0 to 5.</p>
+					</fieldset>
+					<div class="clearFloats"></div>
+					<fieldset data-role="controlgroup" data-mini="true">
+						<legend>Use with Home Assistant</legend>
+						<p>The <a target="_blank" rel="noopener noreferrer" href="https://github.com/nict41/nict41-s-HA-Apps/tree/main/tube_display">Tube Display</a>
+						Home Assistant app renders screens from your Home Assistant states, with rotation and a visual
+						editor, and pushes them to the tubes. The clock's button steps to its next screen while panels
+						are showing.</p>
+						<p>To send a picture to a tube by hand, the body is the raw pixels, RGB565 big-endian, row by row,
+						exactly <code>135*240*2 = 64800</code> bytes for a whole tube:</p>
+						<p><code>curl --data-binary @tube.rgb565 "http://&lt;clock&gt;/panel?tube=0"</code></p>
+						<p class="hint"><code>GET /panel</code> replies which tubes are panel tubes and which still need a
+						picture, as the status above shows.</p>
+					</fieldset>
+                </form>
+            </div>
+		<script>
+			// The page has no settings of its own, so the firmware's answer to its key is ignored, see
+			// handleWSMsg() in main.cpp. The status comes from GET /panel instead. The script sits outside
+			// the page div because jQuery Mobile loads pages with innerHTML, which leaves their scripts
+			// unrun; the handler is delegated, so it still fires for this page.
+			function refreshPanels() {
+				var list = $('#panel_status');
+				$.ajax({
+					url: '/panel',
+					type: 'GET',
+					cache: false,
+					success: function (data) {
+						showPanelStatus(data);
+					},
+					error: function () {
+						list.empty();
+						list.append('<li>Could not reach the clock</li>');
+						list.listview('refresh');
+					}
+				});
+			}
+
+			function showPanelStatus(data) {
+				var tubes = data.tubes || [];
+				var needed = data.needed || [];
+				var list = $('#panel_status');
+				list.empty();
+				for (var i = 0; i < 6; i++) {
+					var text;
+					if (tubes.indexOf(i) != -1) {
+						text = (needed.indexOf(i) != -1) ? 'Panel tube, waiting for a picture' : 'Panel tube, showing a picture';
+					} else {
+						text = 'Not a panel tube in the current mode';
+					}
+					list.append('<li>Tube ' + (i + 1) + ': ' + text + '</li>');
+				}
+				if (data.width && data.height) {
+					list.append('<li>Picture size: ' + data.width + 'x' + data.height + ' pixels</li>');
+				}
+				list.listview('refresh');
+			}
+
+			// Once now (the script runs as the page loads), and again each time the page is shown
+			setTimeout(refreshPanels, 300);
+			$(document).off('pageshow.panels').on('pageshow.panels', '#Panels', function () {
+				refreshPanels();
+			});
+		</script>
+        </div>

@@ -1042,13 +1042,15 @@ void createSSID() {
 
 IRAMPtrArray<const char*> items {
 	WSMenuHandler::clockMenu,
-	WSMenuHandler::ledsMenu,
-	WSMenuHandler::facesMenu,
-	WSMenuHandler::weatherMenu,
+	WSMenuHandler::panelsMenu,
 	WSMenuHandler::matrixMenu,
-	WSMenuHandler::mqttMenu,
+	WSMenuHandler::ledsMenu,
+	WSMenuHandler::weatherMenu,
+	WSMenuHandler::facesMenu,
 	WSMenuHandler::networkMenu,
+	WSMenuHandler::mqttMenu,
 	WSMenuHandler::infoMenu,
+	WSMenuHandler::aboutMenu,
 	0
 };
 
@@ -1738,7 +1740,8 @@ void panelHandler(AsyncWebServerRequest *request) {
 			sep = ",";
 		}
 	}
-	json += "],\"width\":" + String(TFT_WIDTH) + ",\"height\":" + String(TFT_HEIGHT) + "}";
+	json += "],\"width\":" + String(TFT_WIDTH) + ",\"height\":" + String(TFT_HEIGHT)
+		+ ",\"firmware\":\"" FIRMWARE_VERSION "\"}";
 	request->send(200, "application/json", json);
 }
 
@@ -1773,7 +1776,9 @@ static void updateUploadFinish(AsyncWebServerRequest *request, int code, const c
 // request handler, if it can't be written. size is the firmware's size when it's known: the raw
 // body's length, or 0 for a multipart upload, whose content length includes the boundaries.
 static bool updateUploadStart(AsyncWebServerRequest *request, size_t size) {
-	if (!OTA::otaAvailable()) {
+	// ?target=fs writes the file system image (the web UI, faces, icons) instead of the firmware
+	bool filesystem = request->hasArg("target") && request->arg("target") == "fs";
+	if (!filesystem && !OTA::otaAvailable()) {
 		updateUploadFinish(request, 501, "This clock has no room for updates over Wi-Fi");
 		return false;
 	}
@@ -1783,7 +1788,7 @@ static bool updateUploadStart(AsyncWebServerRequest *request, size_t size) {
 	}
 
 	String md5 = request->hasArg("md5") ? request->arg("md5") : "";
-	if (!OTA::otaBegin(size, md5.c_str())) {
+	if (!OTA::otaBegin(size, md5.c_str(), filesystem)) {
 		updateUploadFinish(request, 500, OTA::otaError());
 		return false;
 	}
@@ -1924,6 +1929,8 @@ SETTINGS_PAGE(matrix)
 SETTINGS_PAGE(mqtt)
 SETTINGS_PAGE(network)
 SETTINGS_PAGE(info)
+SETTINGS_PAGE(panels)
+SETTINGS_PAGE(about)
 
 struct SettingsPage {
 	const char *url;
@@ -1941,7 +1948,9 @@ static const SettingsPage settingsPages[] = {
 	{ "/matrix.html", matrixPageStart, matrixPageEnd },
 	{ "/mqtt.html", mqttPageStart, mqttPageEnd },
 	{ "/network.html", networkPageStart, networkPageEnd },
-	{ "/info.html", infoPageStart, infoPageEnd }
+	{ "/info.html", infoPageStart, infoPageEnd },
+	{ "/panels.html", panelsPageStart, panelsPageEnd },
+	{ "/about.html", aboutPageStart, aboutPageEnd }
 };
 
 #define EMBEDDED_FILE(name, file) \

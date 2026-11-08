@@ -1,3 +1,4 @@
+#include <LittleFS.h>
 #include <Update.h>
 #include <esp_ota_ops.h>
 
@@ -62,11 +63,11 @@ bool otaAvailable() {
 	return esp_ota_get_next_update_partition(NULL) != NULL;
 }
 
-bool otaBegin(size_t size, const char *md5) {
+bool otaBegin(size_t size, const char *md5, bool filesystem) {
 	if (state == RUNNING) {
 		return false;
 	}
-	if (!otaAvailable()) {
+	if (!filesystem && !otaAvailable()) {
 		strncpy(lastError, "no second app slot", OTA_ERROR_LEN - 1);
 		lastError[OTA_ERROR_LEN - 1] = 0;
 		state = FAILED;
@@ -76,7 +77,12 @@ bool otaBegin(size_t size, const char *md5) {
 	if (md5 != NULL && md5[0] != 0) {
 		Update.setMD5(md5);
 	}
-	if (!Update.begin(size > 0 ? size : UPDATE_SIZE_UNKNOWN)) {
+	if (filesystem) {
+		// The file system image replaces the whole LittleFS partition, so stop using it first.
+		// Anything that tries to open a file until the restart just gets nothing.
+		LittleFS.end();
+	}
+	if (!Update.begin(size > 0 ? size : UPDATE_SIZE_UNKNOWN, filesystem ? U_SPIFFS : U_FLASH)) {
 		setError(Update.errorString());
 		return false;
 	}

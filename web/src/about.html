@@ -1,0 +1,56 @@
+        <div data-role="page" id="About">
+            <link rel="stylesheet" href="/theme.css">
+            <script src="/theme.js"></script>
+            <div data-role="header" data-position="fixed">
+                <h1>About</h1>
+				<a href="#mainMenu" data-rel="main-menu-panel" class="ui-btn ui-btn-left ui-btn-icon-notext ui-icon-bars ui-corner-all"></a>
+			    <a href="https://github.com/nict41/HA-Tubes/blob/main/docs/user-guide.md#the-web-ui" target="_blank" title="Help" class="ui-btn ui-btn-right ui-btn-icon-notext ui-icon-info ui-corner-all"></a>
+			    <a href="#" onclick="toggleTheme();return false;" title="Light or dark" class="ui-btn ui-btn-right ui-btn-icon-notext ui-icon-theme ui-corner-all"></a>
+            </div>
+            <div data-role="content">
+                <form action="/set_about" method="POST" id="about_form">
+					<p><b>HA Tubes</b> is firmware for IPSTube and EleksTube-style six-screen clocks.</p>
+					<p id="about_version">Firmware version: <span id="about_software_revision">...</span></p>
+					<div class="clearFloats"></div>
+					<fieldset data-role="controlgroup" data-mini="true">
+						<legend>Features</legend>
+						<ul data-role="listview" data-inset="true">
+							<li>Clock faces, weather and slide shows on the six tubes</li>
+							<li>Full-screen panels pushed from Home Assistant over HTTP</li>
+							<li>The Tube Display Home Assistant app, which renders screens from your Home Assistant states</li>
+							<li>LED backlights, screen saver, MQTT and Home Assistant integration</li>
+							<li>Firmware updates over Wi-Fi on clocks with two app slots</li>
+						</ul>
+					</fieldset>
+					<div class="clearFloats"></div>
+					<fieldset data-role="controlgroup" data-mini="true">
+						<legend>Links</legend>
+						<ul data-role="listview" data-inset="true">
+							<li><a target="_blank" rel="noopener noreferrer" href="https://github.com/nict41/HA-Tubes">Project on GitHub</a></li>
+							<li><a target="_blank" rel="noopener noreferrer" href="https://github.com/nict41/HA-Tubes/blob/main/docs/user-guide.md">User guide</a></li>
+							<li><a target="_blank" rel="noopener noreferrer" href="https://github.com/nict41/nict41-s-HA-Apps/tree/main/tube_display">Tube Display Home Assistant app</a></li>
+						</ul>
+					</fieldset>
+					<div class="clearFloats"></div>
+					<fieldset data-role="controlgroup" data-mini="true">
+						<legend>Credits</legend>
+						<p>HA Tubes is based on EleksTubeIPS by Paul Andrews (judge2005) &mdash;
+						<a target="_blank" rel="noopener noreferrer" href="https://github.com/judge2005/EleksTubeIPS">https://github.com/judge2005/EleksTubeIPS</a>
+						&mdash; used under the MIT licence.</p>
+						<p>EleksTubeIPS in turn built on the original firmware of the clock hardware, so thanks to
+						its authors as well.</p>
+					</fieldset>
+                </form>
+            </div>
+		<script>
+			// The firmware version comes from GET /panel, which every HA Tubes firmware answers. This script
+			// sits inside the page div so it runs each time jQuery Mobile loads the page.
+			$.ajax({ url: '/panel', type: 'GET', cache: false,
+				success: function (data) {
+					if (data && data.firmware) { $('#about_software_revision').text(data.firmware); }
+					else { $('#about_version').hide(); }
+				},
+				error: function () { $('#about_version').hide(); }
+			});
+		</script>
+        </div>

@@ -73,11 +73,13 @@ app.use('/delete_face/', function (req, res) {
 var pages = {
 		"type":"sv.init.menu",
 		"value": [
-			{"1": { "url" : "clock.html", "title" : "Clock" }},
-			{"2": { "url" : "leds.html", "title" : "LEDs" }},
-			{"3": { "url" : "faces.html", "title" : "Files" }},
-			{"7": { "url" : "weather.html", "title" : "Weather" }},
-			{"5": { "url" : "info.html", "title" : "Info" }}
+			{"1": { "url" : "clock.html", "title" : "Clock", "group" : "Display" }},
+			{"9": { "url" : "panels.html", "title" : "Panels", "group" : "Display" }},
+			{"2": { "url" : "leds.html", "title" : "LEDs", "group" : "Display" }},
+			{"3": { "url" : "faces.html", "title" : "Files", "group" : "Content" }},
+			{"7": { "url" : "weather.html", "title" : "Weather", "group" : "Content" }},
+			{"5": { "url" : "info.html", "title" : "Info", "group" : "System" }},
+			{"10": { "url" : "about.html", "title" : "About", "group" : "System" }}
 		]
 	}
 

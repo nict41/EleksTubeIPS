@@ -1,62 +1,160 @@
-# A Custom Firmware for the EleksTube IPS V1 clock
+# HA Tubes
 
-## Features of This Firmware
+**Home Assistant on your six-tube clock.** HA Tubes is firmware for IPSTube and EleksTube-style IPS
+clocks that turns each of the six little screens into a display Home Assistant can draw on, plus a
+companion Home Assistant app, **Tube Display**, that designs, renders and rotates those screens for
+you. It keeps everything the original clock firmware does and adds firmware updates over Wi-Fi.
 
-This firmware uses the WiFi support that your clock already has to sync the time with the internet and to provide an easy way to configure the clock and change the display:
+HA Tubes is based on [EleksTubeIPS](https://github.com/judge2005/EleksTubeIPS) by Paul Andrews
+(judge2005), used under the MIT licence. See [Credits](#credits).
 
-* It can display the time, the date or a weather forecast.
-* It synchronizes the time with NTP so it is very accurate.
-* It automatically handles timezone and DST conversions.
-* All clock configurarion is done using a web interface.
-  * Set the timezone information
-  * Set the hours the clock is on
-  * Switch between a six digit clock showing seconds and a four digit AM/PM display
-  * Enable/disable leading zeros
-  * Switch the display between time, date and the weather
-  * Set the date format
-  * Set the backlight effects and colors
-  * Upload, delete and select the images used for the clock display
-  * Configure the weather forecast
-  * Upload, delete and select the icons used for the weather display
-  * Upload, delete and select images for slide show mode
-* Clock faces and weather icons can be selected using the buttons.
-* You can switch between time, date, weather and slide show using the buttons.
-* You can automatically cycle through display modes.
-* It has a screen saver.
-* There is also a tool to convert images in to a format that can be displayed on the clock
-* It can connect to a MQTT broker, primarily to allow use of movement and luminance sensors, setting a custom display value and controlling all aspects of the clock - including uploading image packs. See the [User Guide](https://github.com/judge2005/EleksTubeIPS/wiki/User-Guide#mqtthome-assistant) for details.
-* you can also set custom display values using curl
-* There are specific variants for these clocks:
-  * EleksTube v1
-  * Si Hai
-  * NovelLife SE
-  * PCBWay 'Punkcyber'
-  * IPSTube
+![Claude usage screen](docs/ha-tubes/claude.png)
+![Next train screen](docs/ha-tubes/train.png)
+![Big clock screen](docs/ha-tubes/clock.png)
 
-This image shows the clock running in 4 digit mode with weather forecast
+*Screens rendered by the Tube Display app: a usage dashboard, the next train, and a big HH:MM clock.*
 
-![Captive Portal](docs/original.jpg)
+## What HA Tubes adds
 
-This shows a weather forecast using colored icons:
+### Panels: full-screen pictures from Home Assistant
+* Each tube can show a 135×240 picture sent over the network (`POST /panel`), instead of a digit.
+* Two display modes: **Panels** (all six tubes) and **Four + Panel** (a 4-digit clock plus one
+  picture tube).
+* Pictures stream straight to the screens and are never written to flash, so updating them every few
+  seconds causes no wear.
+* The clock reports over MQTT which tubes are waiting for a picture (`panels_needed`), so Home Assistant
+  can resend after a restart or screen-saver.
+* In Panels mode the clock's button asks Home Assistant for the next screen.
+* A **Panels** page in the clock's web UI shows the live panel status.
 
-![Captive Portal](docs/weather_display.jpg)
+### Tube Display, the Home Assistant app
+* Renders screens from Home Assistant states with templates: rings, big numbers, text, icons
+  (Material Design Icons), bars, sparklines, pictures and camera images.
+* Rotates through screens with per-screen durations and refresh rates, or switches only when you press
+  the clock's button (**Cycle automatically** off).
+* A visual **screen editor** in the Home Assistant sidebar:
+  * a live six-tube preview with real values
+  * an entity picker and colour thresholds (green/amber/red)
+  * icon autocomplete and a picture library with uploads
+  * a YAML view for anything else
+* Home Assistant entities to pick or pin a screen and to turn rotation on or off.
 
-This shows the digital rain screen saver:
+### Firmware updates over Wi-Fi
+* A two-slot flash layout on the 8 MB IPSTube clocks. After one USB install, every later update goes
+  over Wi-Fi.
+* Three ways to update:
+  * upload a `.bin` on the clock's **Info** page
+  * `curl --data-binary @firmware.bin http://<clock>/update`
+  * press **Install** on the clock's **Firmware** update entity in Home Assistant
+* Optional MD5 check, progress on the tubes and in Home Assistant, automatic restart into the new
+  firmware.
 
-![Captive Portal](docs/matrix.jpg)
+### A refreshed web UI
+* A new HA Tubes theme in light and dark, a regrouped menu, and new **Panels** and **About** pages.
+
+### Everything from the original firmware
+* Time, date, weather forecast and slide show display modes, with NTP time sync and automatic time
+  zone / DST handling.
+* Clock faces and weather icon sets you can upload, select and switch with the buttons.
+* LED backlight effects, a digital-rain screen saver, and on/off hours.
+* MQTT with Home Assistant discovery for every setting, custom text, file uploads and motion/light
+  sensors.
+* Builds for EleksTube v1, Si Hai, NovelLife SE, PCBWay "Punkcyber" and IPSTube clocks. Wi-Fi updates
+  need the 8 MB IPSTube boards.
+
+## Install the firmware
+
+1. **First install, over USB.** Open the [web installer](https://nict41.github.io/HA-Tubes/) in Chrome
+   or Edge on a computer, pick your clock and choose **Full install**.
+   * IPSTube: hold the clock's power button while plugging in the USB cable.
+   * Back up the original firmware first if you might want it back (see
+     [Installation](https://github.com/judge2005/EleksTubeIPS/wiki/Installation) in the original
+     project's wiki).
+
+   Clocks already running EleksTubeIPS keep their settings and Wi-Fi details. Uploaded faces and
+   icons go back to the built-in ones, because the file system moves to make room for the second
+   firmware slot.
+2. **Connect to Wi-Fi.** On first start the clock opens its own access point for you to enter your
+   Wi-Fi details. See [Connecting to Wi-Fi](docs/user-guide.md#connecting-to-wi-fi).
+3. **Later updates** go over Wi-Fi: the Info page, curl, or the Home Assistant Firmware entity. See
+   [Updating over Wi-Fi](docs/user-guide.md#updating-over-wi-fi).
+
+Release files for flashing by hand are on the [Releases](https://github.com/nict41/HA-Tubes/releases)
+page. For an IPSTube they go at these addresses:
+
+| Address | File |
+|---|---|
+| 0x1000 | bootloader |
+| 0x8000 | partitions |
+| 0xE000 | boot_app0 |
+| 0x10000 | firmware |
+| 0x410000 | file system |
+
+## Connect it to Home Assistant
+
+1. On the clock's **MQTT** page, enter your broker (for example the Mosquitto broker app). The clock
+   appears in Home Assistant through MQTT discovery as one device:
+   * settings as selects, numbers and switches
+   * a **Firmware** update entity
+   * custom text
+   * panel status
+2. Install the **Tube Display** app:
+   1. In Home Assistant go to **Settings → Apps → App store**. Open the ⋮ menu, choose
+      **Repositories** and add `https://github.com/nict41/nict41-s-HA-Apps`.
+   2. Find **Tube Display**, install it, and on its **Configuration** tab set:
+      * `clock_host`: the clock's IP address
+      * `clock_mqtt_id`: shown on the clock's MQTT page, e.g. `209374ipstube`
+      * `clock_user` / `clock_password`, if the clock's web UI has a login
+   3. Start it, and turn on **Show in sidebar**.
+3. Open **Tube Display** from the sidebar to build screens:
+   1. Add a screen and tap a tube.
+   2. Choose what it shows (an entity, fixed text or a template), its colour or colour thresholds, an
+      icon or a picture.
+   3. Save. The rotation runs straight away.
+
+### How it fits together
+
+```
+Home Assistant states ──► Tube Display app ──renders 6 × 135×240 pictures──► POST /panel ──► clock
+        ▲                    │  screens in /homeassistant/tube_display/screens.yaml
+        │                    └─ MQTT: switches the clock to Panels, reads panels_needed,
+        └──────── MQTT ◄────────── hears clock/<id>/button = next (the clock's button)
+```
+
+* The app renders each screen with Pillow from Home Assistant templates and sends one picture per
+  tube.
+* It re-renders on each screen's refresh interval and resends only when needed.
+* `screens.yaml` is plain YAML. The editor writes it, and you can also edit it by hand: changes are
+  picked up without a restart.
+
+Full app documentation: the app's **Documentation** tab, or
+[DOCS.md](https://github.com/nict41/nict41-s-HA-Apps/blob/main/tube_display/DOCS.md).
 
 ## Documentation
 
-See [the wiki](https://github.com/judge2005/EleksTubeIPS/wiki "wiki") for detailed information on how to build, install and use this firmware.
+* [User Guide](docs/user-guide.md): every web UI page and setting, MQTT and Home Assistant, panels,
+  Wi-Fi updates, the buttons.
+* [Building](#building): compiling the firmware yourself.
+* The original project's [wiki](https://github.com/judge2005/EleksTubeIPS/wiki) still applies to
+  everything HA Tubes inherited: hardware, image collections, the hardware dimming mod.
 
-* [Installation](https://github.com/judge2005/EleksTubeIPS/wiki/Installation) takes you through backing up the original firmware, building the custom firmware and uploading it to the clock
-* [Connecting to WiFi](https://github.com/judge2005/EleksTubeIPS/wiki/Connecting-to-WiFi) takes you through getting your clock connected to your router so it can sync the time with NTP and you can configure it using a web browser.
-* [User Guide](https://github.com/judge2005/EleksTubeIPS/wiki/User-Guide) shows you how to configure and control your clock.
-* [Image Collections](https://github.com/judge2005/EleksTubeIPS/wiki/Image-Collections) tells you how to prepare new clock faces and weather icon sets so that they can be uploaded to the clock and used.
-* [Hardware Modification](https://github.com/judge2005/EleksTubeIPS/wiki/Hardware-Modification) details a mod that you might want to make to your clock, but only if you are comfortable wielding a soldering iron.
+## Building
+
+The firmware is a [PlatformIO](https://platformio.org/) project. `pio run -e ipstube` builds the IPSTube
+firmware. `pio run -e ipstube -t buildfs` builds its file system image, including the web UI from
+`web/` (needs Node.js). Every pull request is built for all clocks in CI, and any compiler warning
+fails the build.
 
 ## Credits
 
-[Original documentation and software from EleksMaker.](https://wiki.eleksmaker.com/doku.php?id=ips)
+* **[EleksTubeIPS](https://github.com/judge2005/EleksTubeIPS)** by Paul Andrews (judge2005). HA Tubes
+  started as a fork of it and keeps its clock, weather, LED, screen-saver, file and MQTT features.
+  Thank you! Its MIT licence and copyright notice are kept in [LICENSE](LICENSE).
+* [Original documentation and software from EleksMaker](https://wiki.eleksmaker.com/doku.php?id=ips).
+* The people in
+  [this reddit discussion](https://www.reddit.com/r/arduino/comments/mq5td9/hacking_the_elekstube_ips_clock_anyone_tried_it/),
+  whose work the original firmware built on.
+* Icons from [Material Design Icons](https://pictogrammers.com/library/mdi/).
 
-This code wouldn't exist without the work done by the people on [this reddit discussion](https://www.reddit.com/r/arduino/comments/mq5td9/hacking_the_elekstube_ips_clock_anyone_tried_it/).
+HA Tubes is not affiliated with EleksMaker, IPSTube or the original project. Please report problems
+with HA Tubes [here](https://github.com/nict41/HA-Tubes/issues), not upstream.

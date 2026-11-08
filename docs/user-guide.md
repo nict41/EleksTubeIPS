@@ -1,14 +1,15 @@
 # User Guide
 
-How to set up and use a clock running [this firmware](https://github.com/judge2005/EleksTubeIPS). To install it, see [Installation](https://github.com/judge2005/EleksTubeIPS/wiki/Installation) in the wiki.
+How to set up and use a clock running [HA Tubes](https://github.com/nict41/HA-Tubes), which is based on [EleksTubeIPS](https://github.com/judge2005/EleksTubeIPS). To install it, use the [web installer](https://nict41.github.io/HA-Tubes/) (see the [README](../README.md#install-the-firmware)); the original project's [Installation](https://github.com/judge2005/EleksTubeIPS/wiki/Installation) page covers backing up the clock's original firmware.
 
 * [Connecting to Wi-Fi](#connecting-to-wi-fi)
 * [Status messages](#status-messages)
-* [The web UI](#the-web-ui): [Clock](#clock), [LEDs](#leds), [Files](#files), [Weather](#weather), [Screen Saver](#screen-saver), [MQTT](#mqtt-and-home-assistant), [Network](#network), [Info](#info)
+* [The web UI](#the-web-ui): [Clock](#clock), [Panels](#showing-pictures-from-home-assistant-panels), [LEDs](#leds), [Files](#files), [Weather](#weather), [Screen Saver](#screen-saver), [MQTT](#mqtt-and-home-assistant), [Network](#network), [Info](#info)
 * [Clock buttons](#clock-buttons)
 * [Showing your own text](#showing-your-own-text)
 * [Showing pictures from Home Assistant (panels)](#showing-pictures-from-home-assistant-panels)
 * [Uploading files over MQTT](#uploading-files-over-mqtt)
+* [Updating over Wi-Fi](#updating-over-wi-fi)
 
 ## Connecting to Wi-Fi
 
@@ -305,12 +306,12 @@ curl --data-binary @firmware-ipstube-2.2.0.bin -H 'Content-Type: application/oct
   http://<clock>/update
 ```
 
-If the web UI has a login, add `--digest -u <user>:<password>`. An optional `md5` query argument checks the file, e.g. `http://<clock>/update?md5=<32 hex digits>`. The reply is `200 Updated, restarting`, or the error, such as `501` on a clock with no second slot or `409` when an update is already running.
+If the web UI has a login, add `--digest -u <user>:<password>`. To update the file system image as well (the web UI pages and the built-in faces and icons), send `littlefs*.bin` with `?target=fs`: `curl --data-binary @littlefs8MB-X.bin -H 'Content-Type: application/octet-stream' 'http://<clock>/update?target=fs'`, or pick that file on the Info page, which sends it there by its name. This replaces uploaded faces, icons and slides with the built-in ones; settings are kept. An optional `md5` query argument checks the file, e.g. `http://<clock>/update?md5=<32 hex digits>`. The reply is `200 Updated, restarting`, or the error, such as `501` on a clock with no second slot or `409` when an update is already running.
 
 With Home Assistant, a **Firmware** update entity appears under the clock's Configuration. It offers an update once the broker has a message on `clock/<id>/ota/latest` (retained) with a newer version, published by an app of yours:
 
 ```json
-{"version":"2.2.0-nt1","url":"http://192.168.8.25:8098/firmware/firmware-ipstube.bin","md5":"<32 hex>","release_url":"https://github.com/judge2005/EleksTubeIPS/releases","title":"2.2.0-nt1"}
+{"version":"2.2.0-nt1","url":"http://192.168.8.25:8098/firmware/firmware-ipstube.bin","md5":"<32 hex>","release_url":"https://github.com/nict41/HA-Tubes/releases","title":"2.2.0-nt1"}
 ```
 
 Only `http://` URLs work, the clock doesn't have enough memory for TLS. Pressing **Install** on the entity makes the clock download the file and restart into it; the entity's state is on `clock/<id>/ota/state` (retained), and the install command goes to `clock/<id>/set/ota_install` with payload `install` (don't set the retain flag).
