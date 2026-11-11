@@ -1,0 +1,20 @@
+# Dependabot version updates: monthly, one grouped pull request per ecosystem.
+# Security alerts and security-fix pull requests are switched on in the
+# repository settings and do not depend on this file.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: monthly
+    groups:
+      npm:
+        patterns: ["*"]
