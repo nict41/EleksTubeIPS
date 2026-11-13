@@ -166,7 +166,8 @@ size_t QoiStream::fastRows(const uint8_t *data, size_t len, uint32_t limit) {
 			done += now;
 			runLeft = (uint8_t)(n - now);
 			while (now > 0) {
-				uint32_t k = width - c < now ? width - c : now;
+				uint32_t room = (uint32_t)(width - c);
+				uint32_t k = room < now ? room : now;
 				for (uint32_t i = 0; i < k; i++) {
 					*out++ = hi;
 					*out++ = lo;
