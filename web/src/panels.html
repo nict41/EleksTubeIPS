@@ -34,6 +34,7 @@
 						<input type="button" value="Wipe" data-inline="true" data-mini="true" onclick="panelTest('wipe');"/>
 						<input type="button" value="Wipe from the centre" data-inline="true" data-mini="true" onclick="panelTest('wipe', '2,3,1,4,0,5');"/>
 						<input type="button" value="Cascade" data-inline="true" data-mini="true" onclick="panelTest('cascade');"/>
+						<input type="button" value="Flip" data-inline="true" data-mini="true" onclick="panelTest('flip', null, 'duration=450&gap=80');"/>
 						<p class="hint" id="panel_test_result"></p>
 					</fieldset>
 					<div class="clearFloats"></div>
@@ -120,8 +121,8 @@
 				info.listview('refresh');
 			}
 
-			function panelTest(transition, order) {
-				var url = '/panel/test?transition=' + transition + (order ? '&order=' + order : '');
+			function panelTest(transition, order, extra) {
+				var url = '/panel/test?transition=' + transition + (order ? '&order=' + order : '') + (extra ? '&' + extra : '');
 				var result = $('#panel_test_result');
 				result.text('Drawing...');
 				$.ajax({

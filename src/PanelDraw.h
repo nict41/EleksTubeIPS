@@ -18,18 +18,24 @@
  *   wipe      the tubes are drawn from the top down, each starting a little after the one before
  *             it in `order`, the whole wipe taking `durationMs`
  *   cascade   the tubes are drawn one after another in `order`, `gapMs` apart
+ *   flip      each tube flips like a split-flap display, `durationMs` each, starting `gapMs` after the
+ *             one before it in `order`: the old top half folds down onto the hinge across the
+ *             middle, uncovering the new top half, then the new bottom half folds down over the old
+ *             one. The clock keeps the start of each tube's last picture (its top half, compressed)
+ *             in IRAM to fold the old top half; a tube without one (after a restart, a GIF, a JPEG,
+ *             a part-tube update...) uncovers its new top half behind a dark edge instead.
  * Records that aren't a whole tube of a tube in `order` are drawn first, straight away.
  *
  * Records: a 14-byte little-endian header (tube, format 0 = rgb565 / 1 = qoi / 2 = jpeg, x, y, w,
  * h, length), then the picture, exactly as POST /panel takes it.
  */
 namespace PanelDraw {
-	enum Kind : uint8_t { NONE, WIPE, CASCADE };
+	enum Kind : uint8_t { NONE, WIPE, CASCADE, FLIP };
 
 	struct Transition {
 		Kind kind = NONE;
-		uint16_t durationMs = 500;	// wipe: the whole wipe
-		uint16_t gapMs = 90;		// cascade: between the tubes
+		uint16_t durationMs = 500;	// wipe: the whole wipe; flip: each tube's flip
+		uint16_t gapMs = 90;		// cascade: between the tubes; flip: between the tubes' starts
 		uint8_t order[6] = { 0, 1, 2, 3, 4, 5 };
 		uint8_t orderLen = 6;
 	};
@@ -41,6 +47,10 @@ namespace PanelDraw {
 	static const size_t HEAP_HEADROOM = 24 * 1024;
 
 	void begin();	// Starts the task. Call after the displays are up.
+
+	// Bytes of IRAM kept for the flip's old pictures: 0 if it couldn't be had, and every flip then
+	// uncovers its tubes' new top halves instead of folding the old ones
+	size_t flipMemory();
 
 	// For the web server's task. bufferFree() is the largest batch that can be held right now (0
 	// while one is being drawn): 64800 bytes in the display buffer, less from the heap while GIFs play.
@@ -59,6 +69,8 @@ namespace PanelDraw {
 	bool busy();			// A batch is being drawn
 	uint32_t msLeft();		// Roughly how long until it's done
 	uint32_t lastDurationMs();	// How long the last batch took to draw, transition included
+	uint8_t lastFlipFoldedTubes();	// Tubes of the last flip that folded their old picture
+	uint16_t lastFlipFrameCount();	// Frames the last flip drew, all of its tubes together
 	void interrupt();		// Stop the batch being drawn: its tubes not yet drawn are marked needed
 
 	// A whole tube was replaced: puts the status message back on top of it and marks it as done

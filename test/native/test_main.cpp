@@ -3,6 +3,8 @@
 // UndefinedBehaviorSanitizer, against QOI images Pillow made.
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -257,12 +259,142 @@ static void testBatch() {
 	std::printf("PanelBatch: ok\n");
 }
 
+// --- feedUntil(), rowOutput() and checkpoints, which the flip transition uses ---
+
+struct Rows {
+	std::vector<uint8_t> rgb565;	// Big-endian, row after row
+	size_t rowLen;
+};
+
+static void collectRow(void *ctx, const uint8_t *row) {
+	Rows *r = (Rows*)ctx;
+	r->rgb565.insert(r->rgb565.end(), row, row + r->rowLen);
+}
+
+static std::vector<uint8_t> toRgb565(const std::vector<uint8_t> &rgb) {
+	std::vector<uint8_t> out;
+	for (size_t i = 0; i + 2 < rgb.size(); i += 3) {
+		uint16_t c = (uint16_t)(((rgb[i] & 0xF8) << 8) | ((rgb[i + 1] & 0xFC) << 3) | (rgb[i + 2] >> 3));
+		out.push_back((uint8_t)(c >> 8));
+		out.push_back((uint8_t)c);
+	}
+	return out;
+}
+
+// Feeds all of data from *pos, pausing at the given pixel counts on the way (in random chunks), then
+// to the end. Returns the last result.
+static QoiStream::Result feedPausing(QoiStream &q, const std::vector<uint8_t> &data, size_t *pos,
+		std::vector<uint32_t> pauses, QoiStream::PixelFn emit, void *ctx) {
+	QoiStream::Result r = QoiStream::OK;
+	pauses.push_back(UINT32_MAX);
+	for (uint32_t limit : pauses) {
+		while (*pos < data.size()) {
+			size_t n = 1 + rnd() % 300;
+			if (n > data.size() - *pos) {
+				n = data.size() - *pos;
+			}
+			size_t used = q.feedUntil(data.data() + *pos, n, limit, emit, ctx, &r);
+			CHECK(used <= n, "feedUntil used %zu of %zu bytes", used, n);
+			*pos += used;
+			if (r != QoiStream::OK || q.pixels() >= limit) {
+				break;
+			}
+		}
+		if (r != QoiStream::OK) {
+			break;
+		}
+		CHECK(limit == UINT32_MAX || q.pixels() == limit || q.complete(),
+			"paused at %u pixels, asked for %u", q.pixels(), limit);
+	}
+	return r;
+}
+
+static void testQoiPausing(const std::string &dir) {
+	FILE *m = std::fopen((dir + "/manifest.txt").c_str(), "r");
+	if (!m) {
+		return;
+	}
+	char name[128];
+	unsigned w, h;
+	while (std::fscanf(m, "%127s %u %u", name, &w, &h) == 3) {
+		std::vector<uint8_t> qoi = readFile(dir + "/" + name + ".qoi");
+		std::vector<uint8_t> want = readFile(dir + "/" + name + ".rgb");
+		std::vector<uint8_t> want565 = toRgb565(want);
+		uint32_t total = w * h;
+		static QoiStream q, copy;
+
+		for (int round = 0; round < 6; round++) {
+			// Pauses anywhere, mid-run too: the same pixels, one call each
+			std::vector<uint32_t> pauses;
+			uint32_t at = 0;
+			while (total > 1 && pauses.size() < 20) {
+				at += 1 + rnd() % (total / 8 + 1);
+				if (at >= total) {
+					break;
+				}
+				pauses.push_back(at);
+			}
+			Pixels px;
+			px.limit = total;
+			q.begin((uint16_t)w, (uint16_t)h);
+			size_t pos = 0;
+			QoiStream::Result r = feedPausing(q, qoi, &pos, pauses, collect, &px);
+			CHECK(r == QoiStream::DONE && px.rgb == want, "%s pausing round %d: pixels differ", name, round);
+
+			// Rows instead of pixels
+			Rows rows;
+			rows.rowLen = (size_t)w * 2;
+			std::vector<uint8_t> row(rows.rowLen);
+			q.begin((uint16_t)w, (uint16_t)h);
+			q.rowOutput(row.data(), collectRow, &rows);
+			pos = 0;
+			r = feedPausing(q, qoi, &pos, pauses, nullptr, nullptr);
+			CHECK(r == QoiStream::DONE && rows.rgb565 == want565, "%s rows round %d: rows differ", name, round);
+		}
+
+		// A checkpoint at the middle row carries on to the same bottom half, as often as wanted
+		if (h >= 2) {
+			uint32_t half = (h / 2) * w;
+			Rows top;
+			top.rowLen = (size_t)w * 2;
+			std::vector<uint8_t> row(top.rowLen), row2(top.rowLen);
+			q.begin((uint16_t)w, (uint16_t)h);
+			q.rowOutput(row.data(), collectRow, &top);
+			size_t pos = 0;
+			QoiStream::Result r = QoiStream::OK;
+			while (pos < qoi.size() && q.pixels() < half) {
+				pos += q.feedUntil(qoi.data() + pos, qoi.size() - pos, half, nullptr, nullptr, &r);
+				if (r != QoiStream::OK) {
+					break;
+				}
+			}
+			CHECK(q.pixels() == half, "%s: checkpoint at %u pixels, not %u", name, q.pixels(), half);
+			CHECK(top.rgb565.size() == half * 2u
+				&& std::equal(top.rgb565.begin(), top.rgb565.end(), want565.begin()), "%s: top half differs", name);
+			for (int again = 0; again < 3; again++) {
+				copy = q;
+				Rows bottom;
+				bottom.rowLen = (size_t)w * 2;
+				copy.rowOutput(row2.data(), collectRow, &bottom);
+				size_t p2 = pos;
+				r = feedPausing(copy, qoi, &p2, {}, nullptr, nullptr);
+				CHECK(r == QoiStream::DONE && bottom.rgb565.size() == want565.size() - half * 2u
+					&& std::equal(bottom.rgb565.begin(), bottom.rgb565.end(), want565.begin() + half * 2),
+					"%s: bottom half from the checkpoint differs (try %d)", name, again);
+			}
+		}
+	}
+	std::fclose(m);
+	std::printf("QoiStream pausing, rows and checkpoints: ok\n");
+}
+
 int main(int argc, char **argv) {
 	if (argc < 2) {
 		std::printf("usage: %s <fixture dir>\n", argv[0]);
 		return 2;
 	}
 	testQoiFixtures(argv[1]);
+	testQoiPausing(argv[1]);
 	testBatch();
 	std::printf("%d checks, %d failed\n", checks, failures);
 	return failures ? 1 : 0;

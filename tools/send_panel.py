@@ -3,9 +3,9 @@
 (panels)" in docs/user-guide.md.
 
     python3 tools/send_panel.py <clock-host> <image> [--tube N | --strip] [--format raw|qoi|jpeg]
-        [--transition none|wipe|cascade [--duration MS] [--gap MS] [--order 2,3,1,4,0,5]]
+        [--transition none|wipe|cascade|flip [--duration MS] [--gap MS] [--order 2,3,1,4,0,5]]
         [--user U --password P] [--status]
-    python3 tools/send_panel.py <clock-host> --test-pattern [wipe|cascade|none]
+    python3 tools/send_panel.py <clock-host> --test-pattern [wipe|cascade|flip|none]
 
 --tube N resizes and crops the image to fill tube N, 0 to 5 left to right, and sends it there.
 --strip crops the image to fill all six tubes side by side (810x240) and splits it into six 135x240
@@ -122,11 +122,11 @@ def main():
     parser.add_argument("--password", help="the web UI login's password")
     parser.add_argument("--status", action="store_true", help="print the GET /panel reply")
     parser.add_argument("--format", choices=("raw", "qoi", "jpeg"), help="picture format (default: qoi if the clock takes it)")
-    parser.add_argument("--transition", choices=("none", "wipe", "cascade"), help="with --strip: a transition the clock plays")
-    parser.add_argument("--duration", type=int, metavar="MS", help="how long a wipe takes (500)")
-    parser.add_argument("--gap", type=int, metavar="MS", help="time between a cascade's tubes (90)")
+    parser.add_argument("--transition", choices=("none", "wipe", "cascade", "flip"), help="with --strip: a transition the clock plays")
+    parser.add_argument("--duration", type=int, metavar="MS", help="how long a wipe takes, or each tube's flip (500)")
+    parser.add_argument("--gap", type=int, metavar="MS", help="time between a cascade's tubes, or between the starts of their flips (90)")
     parser.add_argument("--order", metavar="TUBES", help="the tubes in the order they change, e.g. 2,3,1,4,0,5")
-    parser.add_argument("--test-pattern", nargs="?", const="none", choices=("none", "wipe", "cascade"),
+    parser.add_argument("--test-pattern", nargs="?", const="none", choices=("none", "wipe", "cascade", "flip"),
                         metavar="TRANSITION", help="have the clock draw its test pattern, with a transition")
     args = parser.parse_args()
 
