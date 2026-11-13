@@ -311,7 +311,7 @@ curl -d value=clear http://<clock>/custom
 
 ## Showing pictures from Home Assistant (panels)
 
-With **Display** set to **Panels**, all six displays show pictures streamed to the clock over HTTP instead of the time. With **Number of Digits** set to **Four + Panel** while Display is Time, only the last display does, and the other four show the time as usual. The clock's mode button skips Panels, so choose it in the web UI or over MQTT (`clock/<id>/set/display` with 4).
+With **Display** set to **Panels**, all six displays show pictures streamed to the clock over HTTP instead of the time. With **Number of Digits** set to **Four + Panel** while Display is Time, only the last display does, and the other four show the time as usual. The clock's button skips Panels, so choose it in the web UI or over MQTT (`clock/<id>/set/display` with 4).
 
 The easy way to use panels is the **[Tube Display](https://github.com/nict41/nict41-s-HA-Apps/tree/main/tube_display)** Home Assistant app. It switches the clock to Panels for you and draws screens from your Home Assistant states: rings, big numbers, text, icons, pictures and camera images. It rotates through them, or steps through them with the clock's button, and has a visual editor in the Home Assistant sidebar. See the [README](../README.md#connect-it-to-home-assistant) to install it. The rest of this section is for sending pictures yourself.
 
