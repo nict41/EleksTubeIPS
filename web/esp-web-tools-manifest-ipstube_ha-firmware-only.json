@@ -1,0 +1,14 @@
+{
+    "name": "IPSTube Replacement Firmware (Home Assistant only)",
+    "version": "$version$",
+    "new_install_prompt_erase": true,
+    "builds": [
+      {
+        "chipFamily": "ESP32",
+        "improv": false,
+        "parts": [
+          { "path": "firmware-ipstube_ha-$version$.bin", "offset": 65536 }
+        ]
+      }
+    ]
+  }
