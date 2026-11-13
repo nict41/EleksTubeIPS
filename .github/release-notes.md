@@ -1,4 +1,7 @@
 # What's new #
+* **The web installer now picks IPSTube, Home Assistant only for you**, the build for an IPSTube whose screens come from Home Assistant. The other clocks and the standard IPSTube build are under *Other clocks and builds*. The README and User Guide are written for this build now, with new screenshots of its web UI.
+* **Fix: in the Home Assistant-only build, the IPSTube's button can reach the slide show again.** It went time, date, then back to the time (the weather it would have moved to isn't there), so it never got to the slide show.
+* **The About page leaves out the weather in the Home Assistant-only build.**
 * **Less heap used for screens:** when the clock is using its display buffer itself for a moment (for example while it blanks the tubes after a brightness change), a screen sent then is answered with a short "try again" instead of being held on the heap, which could take up to 24 KB of it. Tube Display already retries, so screens arrive as before, a few milliseconds later.
 
 # Installation #
@@ -23,8 +26,8 @@ NOTE: littlefs8MB-$version$.bin, bootloader8MB.bin and partitions8MB.bin are onl
 | NovelLife SE | `firmware-novellifese-$version$.bin` |
 | Si Hai | `firmware-sihai-$version$.bin` |
 | PCBWay PunkCyber | `firmware-punkcyber-$version$.bin` |
-| IPSTube (H401/H402) | `firmware-ipstube-$version$.bin` |
-| IPSTube used only through Home Assistant | `firmware-ipstube_ha-$version$.bin` |
+| **IPSTube (H401/H402) with Home Assistant, recommended** | `firmware-ipstube_ha-$version$.bin` |
+| IPSTube (H401/H402), standard, with the clock's own weather | `firmware-ipstube-$version$.bin` |
 | IPSTube with hardware dimming | `firmware-ipstube_dim-$version$.bin` |
 
 Some clocks sold as an EleksTube IPS V2 need the V1 firmware. If every display shows the same digit after installing, install the other EleksTube version's firmware file.
