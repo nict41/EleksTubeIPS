@@ -317,7 +317,7 @@ POST http://<clock>/panel/batch?transition=flip&duration=450&gap=80
 
 The body is a run of records, each a 14-byte header and then the picture. The header's numbers are little-endian: `tube` (1 byte), `format` (1 byte: 0 for raw RGB565, 1 for QOI, 2 for JPEG), `x`, `y`, `w`, `h` (2 bytes each) and the picture's length in bytes (4 bytes). Each picture is exactly what `POST /panel` takes for that rectangle in that format.
 
-The clock keeps the whole batch in memory as it arrives and draws it once it's all there, on a task of its own, so the reply comes as soon as the body is in. (Decoding on the web server's task while the body arrives would lose packets, which stalls the upload for half a second or more.) `batch_buffer` in `GET /panel` is the largest batch it can hold right now: 64.8 KB, in the display buffer the clock faces use, which is idle while the tubes show panels, so a batch takes no extra memory. While GIFs play they use that buffer, and a batch then comes from the heap: at most 24 KB, and only while enough heap stays free. A bigger batch is answered `413`. Then send it in smaller pieces, or the pictures one by one; a batch of at most 4 KB is still taken, drawn as it arrives, but without JPEG or a transition.
+The clock keeps the whole batch in memory as it arrives and draws it once it's all there, on a task of its own, so the reply comes as soon as the body is in. (Decoding on the web server's task while the body arrives would lose packets, which stalls the upload for half a second or more.) `batch_buffer` in `GET /panel` is the largest batch it can hold right now: 64.8 KB, in the display buffer the clock faces use, which is idle while the tubes show panels, so a batch takes no extra memory. While GIFs play they use that buffer, and a batch then comes from the heap: at most 24 KB, and only while enough heap stays free. If the clock is using the display buffer itself for a moment, for example blanking the tubes after a brightness change, a batch is answered `503` with an `X-Retry-After-Ms` header, rather than taking up heap. A bigger batch is answered `413`. Then send it in smaller pieces, or the pictures one by one; a batch of at most 4 KB is still taken, drawn as it arrives, but without JPEG or a transition.
 
 Transitions are played by the clock at the displays' own speed, with exact timing:
 
@@ -336,7 +336,7 @@ Only whole-tube records of the tubes in `order` take part in a transition; anyth
 {"tubes":[0,1,2,3,4,5],"needed":[2],"playing":[],"width":135,"height":240,
  "formats":["rgb565","qoi","jpeg"],"batch":true,"batch_buffer":64802,"transitions":["wipe","cascade","flip"],
  "flip_memory":30720,"last_flip":{"folded":6,"frames":88},"drawing":false,"last_draw_ms":150,"gif":true,
- "gif_free":1820000,"firmware":"2.6.0"}
+ "gif_free":1820000,"firmware":"2.6.1"}
 ```
 
 `formats`, `batch`, `transitions` and `gif` say what this firmware accepts (older firmware leaves them out), `playing` lists the tubes playing a GIF, and `gif_free` is the space left for GIFs.

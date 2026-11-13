@@ -2021,7 +2021,12 @@ static bool panelBatchStart(AsyncWebServerRequest *request, size_t total) {
 		}
 		return false;
 	}
-	uint8_t *stage = PanelDraw::takeBuffer(total);
+	bool retrySoon = false;
+	uint8_t *stage = PanelDraw::takeBuffer(total, &retrySoon);
+	if (stage == NULL && retrySoon) {
+		panelUploadBusyDrawing(request, 30);	// The display buffer is free again in a moment
+		return false;
+	}
 	if (stage == NULL && (transition.kind != PanelDraw::NONE || total > PANEL_BATCH_STREAM_MAX)) {
 		// Drawn as it arrives, a big batch would lose packets and stall, see PanelDraw.h
 		panelUploadFinish(request, 413, "batch too big to hold in memory now, see batch_buffer in GET /panel");
