@@ -2077,6 +2077,50 @@ static bool panelBatchRecordEnd(AsyncWebServerRequest *request) {
 	return true;
 }
 
+// Feeds batch bytes that are drawn as they arrive (a batch that isn't held in memory). Returns false,
+// with the reply left for the request handler, if a record is bad.
+static bool panelBatchFeed(AsyncWebServerRequest *request, const uint8_t *data, size_t len) {
+	size_t offset = 0;
+	while (offset < len) {
+		if (!panelUpload.inRecord) {
+			size_t take = PANEL_BATCH_HEADER - panelUpload.recordHeaderBytes;
+			if (take > len - offset) {
+				take = len - offset;
+			}
+			memcpy(panelUpload.recordHeader + panelUpload.recordHeaderBytes, data + offset, take);
+			panelUpload.recordHeaderBytes += take;
+			offset += take;
+			if (panelUpload.recordHeaderBytes == PANEL_BATCH_HEADER) {
+				panelUpload.recordHeaderBytes = 0;
+				if (!panelBatchRecordStart(request)) {
+					return false;
+				}
+			}
+			continue;
+		}
+
+		size_t take = panelUpload.recordLeft;
+		if (take > len - offset) {
+			take = len - offset;
+		}
+		if (panelUpload.format == PanelUpload::QOI) {
+			if (panelUpload.qoi.feed(data + offset, take, panelQoiPixel, NULL) == QoiStream::ERROR) {
+				panelUploadFinish(request, 400, panelUpload.qoi.error());
+				return false;
+			}
+		} else {
+			panelRawFeed(data + offset, take);	// The header's length is w*h*2, so it takes all of it
+		}
+		offset += take;
+		panelUpload.recordLeft -= take;
+		if (panelUpload.recordLeft == 0 && !panelBatchRecordEnd(request)) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
 /*
  * The body of POST /panel/batch[?transition=wipe|cascade&duration=&gap=&order=&interrupt=1]: several
  * pictures in one request, each record a 14-byte header (little-endian: tube, format 0 = rgb565 /
