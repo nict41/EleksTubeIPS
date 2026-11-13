@@ -1,5 +1,5 @@
 {
-    "name": "IPSTube With Hardware Dimming Replacement Firmware",
+    "name": "HA Tubes Firmware for IPSTube Clock With Hardware Dimming",
     "version": "$version$",
     "new_install_prompt_erase": true,
     "new_install_improv_wait_time": 30,

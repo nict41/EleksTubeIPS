@@ -54,23 +54,29 @@
 #define ITEM_FONT   2        // font for menus
 #define TITLE_FONT  4        // font for all headings
 
-// Should match what is in the manifest files. Bump version for a release.
+// The firmware name should match "name" in web/esp-web-tools-manifest-*.json, which the web installer
+// compares with what the clock reports to offer an update rather than a fresh install. The version
+// comes from version.py: bump it there for a release.
 IRAMPtrArray<const char*> manifest {
 	// Firmware name
 #if defined(HARDWARE_PunkCyber_CLOCK)
-	"PCBWay RGB Glow Tube Clock Firmware",
+	"HA Tubes Firmware for PCBWay RGB Glow Tube Clock",
 #elif defined(HARDWARE_Elekstube_CLOCK)
-	"EleksTubeIPS V1 Replacement Firmware",
+	"HA Tubes Firmware for EleksTube IPS V1",
 #elif defined(HARDWARE_Elekstube_CLOCK_V2)
-	"EleksTubeIPS V2 Replacement Firmware",
+	"HA Tubes Firmware for EleksTube IPS V2",
 #elif defined(HARDWARE_NovelLife_SE_CLOCK)
-	"NovelLife SE Replacement Firmware",
+	"HA Tubes Firmware for NovelLife SE",
 #elif defined(HARDWARE_SI_HAI_CLOCK)
-	"Si Hai Clock Replacement Firmware",
+	"HA Tubes Firmware for Si Hai Clock",
 #elif defined(HARDWARE_IPSTube_CLOCK)
-	"IPSTube Clock Replacement Firmware",
+#if defined(HA_ONLY)
+	"HA Tubes Firmware for IPSTube Clock (Home Assistant only)",
+#else
+	"HA Tubes Firmware for IPSTube Clock",
+#endif
 #elif defined(HARDWARE_IPSTube_DIM_CLOCK)
-	"IPSTube Clock With Hardware Dimming, Replacement Firmware",
+	"HA Tubes Firmware for IPSTube Clock With Hardware Dimming",
 #else
 	"Unknown clock hardware",
 #endif
@@ -147,7 +153,7 @@ QueueHandle_t weatherQueue;
 QueueHandle_t wsPendingQueue;	// Web UI updates from tasks other than async_tcp, see broadcastUpdate()
 
 AsyncWiFiManagerParameter *hostnameParam;
-String ssid("EleksTubeIPS");
+String ssid("HATubes");
 String mqttId;	// What upstream used as the access point's name, see setup()
 String chipId = getChipId();
 
@@ -1072,7 +1078,7 @@ void createSSID() {
 	uint8_t macid[6];
 	esp_efuse_mac_get_default(macid);
 	char name[16];
-	snprintf(name, sizeof(name), "EleksTube%02X%02X", macid[4], macid[5]);
+	snprintf(name, sizeof(name), "HATubes%02X%02X", macid[4], macid[5]);
 	ssid = name;
 }
 

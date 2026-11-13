@@ -1,5 +1,7 @@
 # What's new #
-* **The Home Assistant-only build leaves the weather out of its web UI and Home Assistant too** (it already didn't fetch the weather): no Weather page or menu entry, no Weather display or Four + Weather choice, no weather icons on the Clock Faces page, and no weather entities in Home Assistant (the ones an earlier build created are removed). A display or number of digits that showed the weather falls back to Time or Six. The standard IPSTube build is unchanged.
+* **The firmware is called HA Tubes everywhere it names itself.** The Info page's Description and the model in Home Assistant's device info now read e.g. "HA Tubes Firmware for IPSTube Clock" ("... (Home Assistant only)" for that build), and the web installer uses the same names.
+* **The clock's setup Wi-Fi network is now `HATubes` followed by four characters**, e.g. `HATubesB2C3`, instead of `EleksTubeB2C3`. Its password is unchanged.
+* Nothing else changes: the hostname, the MQTT topics, Home Assistant's entity IDs and the device name stay the same, so automations and dashboards keep working.
 
 # Installation #
 The IPSTube clocks (H401/H402 and the hardware-dimming one) can now update themselves over Wi-Fi, see [Updating over Wi-Fi](https://github.com/nict41/HA-Tubes/blob/main/docs/user-guide.md#updating-over-wi-fi). The other clocks still can't, so flash them over USB. The easiest way is the [web installer]($installer$), which works in Chrome or Edge on a computer. The [installation guide](https://github.com/judge2005/EleksTubeIPS/wiki/Installation) covers connecting the clock and backing up its original firmware.
