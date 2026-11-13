@@ -1548,6 +1548,7 @@ void customHandler(AsyncWebServerRequest *request) {
 #define PANEL_JPEG_MAX (48 * 1024)			// Largest JPEG body accepted
 #define PANEL_JPEG_HEADROOM (16 * 1024)		// Heap left over after taking the body: decoder + everything else
 static_assert(PANEL_JPEG_MAX <= sizeof(StaticSprite::output_buffer), "A JPEG must fit the display buffer");
+#define PANEL_BATCH_HEADER 14				// Bytes of a /panel/batch record header
 
 // The /panel upload in progress. ESPAsyncWebServer calls the body handler as the body arrives and the
 // request handler only once all of it has, so the body handler checks the request and draws, and the
@@ -1572,6 +1573,16 @@ struct PanelUpload {
 	uint8_t *jpeg = NULL;
 	size_t jpegLen = 0;
 	bool jpegInDisplayBuffer = false;	// jpeg points into the display buffer, holding memMutex
+
+	// POST /panel/batch: the body is a run of records, each a 14-byte header and then its picture,
+	// and the fields above describe the record being drawn
+	bool batch = false;
+	uint8_t recordHeader[PANEL_BATCH_HEADER];
+	uint8_t recordHeaderBytes = 0;	// Header bytes of the next record taken so far
+	bool inRecord = false;			// The header is in and the picture is arriving
+	uint32_t recordLeft = 0;		// Picture bytes of the current record still to come
+	uint16_t records = 0;			// Records drawn so far
+	bool replacedWhole = false;		// A record replaced a whole tube, so MQTT needs telling
 
 	AsyncWebServerRequest *resultRequest = NULL;	// The request the reply below is for
 	int resultCode = 0;
@@ -1613,6 +1624,20 @@ static void panelUploadFlushRows() {
 		panelUpload.w, panelUpload.rowCount, panelUpload.rows);
 	panelUpload.drawnRows += panelUpload.rowCount;
 	panelUpload.rowCount = 0;
+}
+
+// Forgets the upload if its client goes away part way through (the tube then still needs a picture)
+static void panelUploadWatchDisconnect(AsyncWebServerRequest *request) {
+	request->onDisconnect([request]() {
+		if (panelUpload.request == request) {
+			panelUpload.active = false;
+			panelUpload.request = NULL;
+			panelUploadFreeJpeg();
+		}
+		if (panelUpload.resultRequest == request) {
+			panelUpload.resultRequest = NULL;
+		}
+	});
 }
 
 // Checks a new upload's arguments when its first body bytes arrive. Returns false, with the reply
@@ -1707,20 +1732,11 @@ static bool panelUploadStart(AsyncWebServerRequest *request, size_t total) {
 	panelUpload.rowBytes = 0;
 	panelUpload.drawnRows = 0;
 	panelUpload.rowCount = 0;
+	panelUpload.batch = false;
 	if (format == PanelUpload::QOI) {
 		panelUpload.qoi.begin((uint16_t)w, (uint16_t)h);
 	}
-	request->onDisconnect([request]() {
-		// Aborted part way through, so the tube still needs a fresh picture
-		if (panelUpload.request == request) {
-			panelUpload.active = false;
-			panelUpload.request = NULL;
-			panelUploadFreeJpeg();
-		}
-		if (panelUpload.resultRequest == request) {
-			panelUpload.resultRequest = NULL;
-		}
-	});
+	panelUploadWatchDisconnect(request);
 	return true;
 }
 
@@ -1746,16 +1762,48 @@ static void panelQoiPixel(void *ctx, uint8_t r, uint8_t g, uint8_t b) {
 	panelPutPixel((uint8_t)(c >> 8), (uint8_t)(c & 0xFF));
 }
 
+// Takes raw RGB565 bytes of the rectangle being drawn, at most up to its end, and draws complete rows
+// PANEL_ROWS_PER_CALL at a time. Returns how many bytes it took.
+static size_t panelRawFeed(const uint8_t *data, size_t len) {
+	size_t rowLen = (size_t)panelUpload.w * 2;
+	size_t offset = 0;
+	while (offset < len && panelUpload.received < panelUpload.expected) {
+		size_t take = rowLen - panelUpload.rowBytes;
+		if (take > len - offset) {
+			take = len - offset;
+		}
+		memcpy(panelUpload.row + panelUpload.rowBytes, data + offset, take);
+		panelUpload.rowBytes += take;
+		panelUpload.received += take;
+		offset += take;
+
+		if (panelUpload.rowBytes == rowLen) {
+			// A complete row: keep it with the others until there are enough to draw
+			memcpy(panelUpload.rows + (size_t)panelUpload.rowCount * rowLen, panelUpload.row, rowLen);
+			panelUpload.rowBytes = 0;
+			panelUpload.rowCount++;
+			if (panelUpload.rowCount == PANEL_ROWS_PER_CALL) {
+				panelUploadFlushRows();
+			}
+		}
+	}
+	return offset;
+}
+
+// A whole tube was replaced: put the status message back on top of it and mark it as done
+static void panelWholeTubeReplaced(uint8_t tube) {
+	tfts->claim();
+	tfts->chip_select.setDigit(TFTs::panelToDigit(tube));
+	tfts->drawStatus();
+	tfts->release();
+	tfts->clearPanelNeeded(tube);
+}
+
 // Done once the whole body is in, whatever its format: the bookkeeping for a replaced tube and the reply
 static void panelUploadComplete(AsyncWebServerRequest *request) {
 	if (panelUpload.x == 0 && panelUpload.y == 0 && panelUpload.w == TFT_WIDTH && panelUpload.h == TFT_HEIGHT) {
-		// The whole tube was replaced, so put the status message back on top of it and tell
-		// Home Assistant the tube has its picture now
-		tfts->claim();
-		tfts->chip_select.setDigit(TFTs::panelToDigit(panelUpload.tube));
-		tfts->drawStatus();
-		tfts->release();
-		tfts->clearPanelNeeded(panelUpload.tube);
+		// The whole tube was replaced, so tell Home Assistant the tube has its picture now
+		panelWholeTubeReplaced(panelUpload.tube);
 		requestMqttPublish();
 	}
 	panelUploadFinish(request, 200, "ok");
@@ -1810,28 +1858,10 @@ void panelBodyHandler(AsyncWebServerRequest *request, uint8_t *data, size_t len,
 		return;
 	}
 
-	size_t rowLen = (size_t)panelUpload.w * 2;
-	size_t offset = 0;
-	while (offset < len && panelUpload.received + offset < panelUpload.expected) {
-		size_t take = rowLen - panelUpload.rowBytes;
-		if (take > len - offset) {
-			take = len - offset;
-		}
-		memcpy(panelUpload.row + panelUpload.rowBytes, data + offset, take);
-		panelUpload.rowBytes += take;
-		offset += take;
-
-		if (panelUpload.rowBytes == rowLen) {
-			// A complete row: keep it with the others until there are enough to draw
-			memcpy(panelUpload.rows + (size_t)panelUpload.rowCount * rowLen, panelUpload.row, rowLen);
-			panelUpload.rowBytes = 0;
-			panelUpload.rowCount++;
-			if (panelUpload.rowCount == PANEL_ROWS_PER_CALL) {
-				panelUploadFlushRows();
-			}
-		}
+	if (panelRawFeed(data, len) < len) {
+		panelUploadFinish(request, 400, "body length must be w*h*2");
+		return;
 	}
-	panelUpload.received += len;
 
 	if (index + len >= total) {
 		if (panelUpload.received != panelUpload.expected) {
@@ -1840,6 +1870,179 @@ void panelBodyHandler(AsyncWebServerRequest *request, uint8_t *data, size_t len,
 		}
 		panelUploadFlushRows();
 		panelUploadComplete(request);
+	}
+}
+
+static uint16_t panelLe16(const uint8_t *p) {
+	return (uint16_t)(p[0] | (p[1] << 8));
+}
+
+// Checks a POST /panel/batch when its first body bytes arrive. Returns false, with the reply left
+// for the request handler, if it can't be taken.
+static bool panelBatchStart(AsyncWebServerRequest *request, size_t total) {
+	if (total < PANEL_BATCH_HEADER) {
+		panelUploadFinish(request, 400, "a batch needs at least one record");
+		return false;
+	}
+	if (panelUpload.active) {
+		panelUploadFinish(request, 503, "another panel upload is in progress");
+		return false;
+	}
+	if (OTA::otaBusy()) {
+		panelUploadFinish(request, 503, "a firmware update is in progress");
+		return false;
+	}
+	panelUpload.request = request;
+	panelUpload.active = true;
+	panelUpload.batch = true;
+	panelUpload.recordHeaderBytes = 0;
+	panelUpload.inRecord = false;
+	panelUpload.recordLeft = 0;
+	panelUpload.records = 0;
+	panelUpload.replacedWhole = false;
+	panelUploadWatchDisconnect(request);
+	return true;
+}
+
+// The header of the next record is in: check it and get ready to draw its picture
+static bool panelBatchRecordStart(AsyncWebServerRequest *request) {
+	const uint8_t *hd = panelUpload.recordHeader;
+	uint8_t tube = hd[0];
+	uint8_t fmt = hd[1];
+	int x = panelLe16(hd + 2), y = panelLe16(hd + 4), w = panelLe16(hd + 6), h = panelLe16(hd + 8);
+	uint32_t len = (uint32_t)hd[10] | ((uint32_t)hd[11] << 8) | ((uint32_t)hd[12] << 16) | ((uint32_t)hd[13] << 24);
+
+	if (tube >= NUM_DIGITS) {
+		panelUploadFinish(request, 400, "batch record: tube must be 0 to 5");
+		return false;
+	}
+	if (w <= 0 || h <= 0 || w > TFT_WIDTH || h > TFT_HEIGHT || x > TFT_WIDTH - w || y > TFT_HEIGHT - h) {
+		panelUploadFinish(request, 400, "batch record: rectangle must be inside the tube");
+		return false;
+	}
+	size_t expected = (size_t)w * h * 2;
+	if (fmt == 0) {
+		if (len != expected) {
+			panelUploadFinish(request, 400, "batch record: rgb565 length must be w*h*2");
+			return false;
+		}
+	} else if (fmt == 1) {
+		if (len < 14 + 8) {
+			panelUploadFinish(request, 400, "batch record: not a QOI image");
+			return false;
+		}
+	} else {
+		panelUploadFinish(request, 400, "batch record: format must be 0 (rgb565) or 1 (qoi)");
+		return false;
+	}
+	if (!tfts->isPanelTube(tube)) {
+		panelUploadFinish(request, 409, "not a panel tube");
+		return false;
+	}
+
+	GifPlayer::stop(tube);	// A picture replaces whatever GIF played on the tube
+
+	panelUpload.format = fmt == 1 ? PanelUpload::QOI : PanelUpload::RGB565;
+	panelUpload.tube = tube;
+	panelUpload.x = (int16_t)x;
+	panelUpload.y = (int16_t)y;
+	panelUpload.w = (int16_t)w;
+	panelUpload.h = (int16_t)h;
+	panelUpload.expected = expected;
+	panelUpload.received = 0;
+	panelUpload.rowBytes = 0;
+	panelUpload.drawnRows = 0;
+	panelUpload.rowCount = 0;
+	if (fmt == 1) {
+		panelUpload.qoi.begin((uint16_t)w, (uint16_t)h);
+	}
+	panelUpload.recordLeft = len;
+	panelUpload.inRecord = true;
+	return true;
+}
+
+// All of a record's bytes are in: draw what's left of it and do a replaced tube's bookkeeping
+static bool panelBatchRecordEnd(AsyncWebServerRequest *request) {
+	if (panelUpload.format == PanelUpload::QOI ? !panelUpload.qoi.complete()
+			: panelUpload.received != panelUpload.expected) {
+		panelUploadFinish(request, 400, "batch record: picture incomplete");
+		return false;
+	}
+	panelUploadFlushRows();
+	if (panelUpload.x == 0 && panelUpload.y == 0 && panelUpload.w == TFT_WIDTH && panelUpload.h == TFT_HEIGHT) {
+		panelWholeTubeReplaced(panelUpload.tube);
+		panelUpload.replacedWhole = true;
+	}
+	panelUpload.records++;
+	panelUpload.inRecord = false;
+	return true;
+}
+
+/*
+ * Streams the body of POST /panel/batch: several pictures in one request, drawn one after another as
+ * they arrive, which saves the cost of a request per picture. The body is a run of records, each a
+ * 14-byte header (little-endian) and then the picture:
+ *   tube (1 byte), format (1 byte: 0 = rgb565, 1 = qoi), x, y, w, h (2 bytes each), length (4 bytes)
+ * A picture is exactly what POST /panel takes for that rectangle in that format. JPEG isn't taken
+ * here: it needs its whole body in memory, so it goes to POST /panel on its own. The records before
+ * a bad one are drawn; panelHandler() sends the reply.
+ */
+void panelBatchBodyHandler(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+	if (index == 0 && !panelBatchStart(request, total)) {
+		return;
+	}
+	if (!panelUpload.active || panelUpload.request != request || !panelUpload.batch) {
+		return;	// The rest of a request that was rejected
+	}
+
+	size_t offset = 0;
+	while (offset < len) {
+		if (!panelUpload.inRecord) {
+			size_t take = PANEL_BATCH_HEADER - panelUpload.recordHeaderBytes;
+			if (take > len - offset) {
+				take = len - offset;
+			}
+			memcpy(panelUpload.recordHeader + panelUpload.recordHeaderBytes, data + offset, take);
+			panelUpload.recordHeaderBytes += take;
+			offset += take;
+			if (panelUpload.recordHeaderBytes == PANEL_BATCH_HEADER) {
+				panelUpload.recordHeaderBytes = 0;
+				if (!panelBatchRecordStart(request)) {
+					return;
+				}
+			}
+			continue;
+		}
+
+		size_t take = panelUpload.recordLeft;
+		if (take > len - offset) {
+			take = len - offset;
+		}
+		if (panelUpload.format == PanelUpload::QOI) {
+			if (panelUpload.qoi.feed(data + offset, take, panelQoiPixel, NULL) == QoiStream::ERROR) {
+				panelUploadFinish(request, 400, panelUpload.qoi.error());
+				return;
+			}
+		} else {
+			panelRawFeed(data + offset, take);	// The header's length is w*h*2, so it takes all of it
+		}
+		offset += take;
+		panelUpload.recordLeft -= take;
+		if (panelUpload.recordLeft == 0 && !panelBatchRecordEnd(request)) {
+			return;
+		}
+	}
+
+	if (index + len >= total) {
+		bool replaced = panelUpload.replacedWhole;
+		if (panelUpload.inRecord || panelUpload.recordHeaderBytes != 0) {
+			panelUploadFinish(request, 400, "batch ends part way through a record");
+		} else {
+			panelUploadFinish(request, 200, "ok");
+		}
+		if (replaced) {
+			requestMqttPublish();	// Home Assistant hears which tubes have their pictures now
+		}
 	}
 }
 
@@ -1893,7 +2096,7 @@ void panelHandler(AsyncWebServerRequest *request) {
 		}
 	}
 	json += "],\"width\":" + String(TFT_WIDTH) + ",\"height\":" + String(TFT_HEIGHT)
-		+ ",\"formats\":[\"rgb565\",\"qoi\",\"jpeg\"],\"gif\":true,\"gif_free\":"
+		+ ",\"formats\":[\"rgb565\",\"qoi\",\"jpeg\"],\"batch\":true,\"gif\":true,\"gif_free\":"
 		+ String((unsigned long)GifPlayer::freeBytes())
 		+ ",\"firmware\":\"" FIRMWARE_VERSION "\"}";
 	request->send(200, "application/json", json);
@@ -2339,6 +2542,8 @@ void configureWebServer() {
 	server->serveStatic("/", LittleFS, "/");
 	server->on("/", HTTP_GET, mainHandler).setFilter(ON_STA_FILTER);
 	server->on("/custom", HTTP_GET | HTTP_POST, customHandler);
+	// /panel/batch first: a handler for /panel would also take /panel/<anything>
+	server->on("/panel/batch", HTTP_POST, panelHandler, NULL, panelBatchBodyHandler);
 	server->on("/panel", HTTP_GET | HTTP_POST, panelHandler, NULL, panelBodyHandler);
 	// The specific /gif/... routes first: a handler for /gif would also take /gif/<anything>
 	server->on("/gif/play", HTTP_POST, gifPlayHandler);

@@ -303,14 +303,22 @@ POST http://<clock>/panel?tube=N[&x=X&y=Y&w=W&h=H]
 
 The reply is `200 ok`, `400` if the arguments or the body length are wrong, `409` if that tube isn't a panel tube in the current mode, or `503` if another picture is being sent at the same time. If the web UI has a login, the request needs it too, like any other page: add `--digest -u <user>:<password>` with curl.
 
+Several pictures can go in one request, which saves most of a request's cost (roughly 20 to 40 ms) when the pictures are small, such as a band of each tube:
+
+```
+POST http://<clock>/panel/batch
+```
+
+The body is a run of records, each a 14-byte header and then the picture. The header's numbers are little-endian: `tube` (1 byte), `format` (1 byte: 0 for raw RGB565, 1 for QOI), `x`, `y`, `w`, `h` (2 bytes each) and the picture's length in bytes (4 bytes). Each picture is exactly what `POST /panel` takes for that rectangle in that format; JPEG isn't accepted here, as it has to be held in memory whole, so send it on its own. The records are drawn one after another as they arrive. The replies are the same as for `POST /panel`, and if a record is wrong the ones before it have been drawn already. Keep a batch of QOI pictures to about 3 KB: the clock decodes QOI more slowly than Wi-Fi delivers it, and past about 5 KB the upload stalls for half a second or more while the clock catches up. Raw batches can be any size.
+
 `GET http://<clock>/panel` replies which tubes are panel tubes and which of them still need a picture:
 
 ```json
 {"tubes":[0,1,2,3,4,5],"needed":[2],"playing":[],"width":135,"height":240,
- "formats":["rgb565","qoi","jpeg"],"gif":true,"gif_free":1820000,"firmware":"2.4.0"}
+ "formats":["rgb565","qoi","jpeg"],"batch":true,"gif":true,"gif_free":1820000,"firmware":"2.5.0"}
 ```
 
-`formats` and `gif` say what this firmware accepts (older firmware leaves them out), `playing` lists the tubes playing a GIF, and `gif_free` is the space left for GIFs.
+`formats`, `batch` and `gif` say what this firmware accepts (older firmware leaves them out), `playing` lists the tubes playing a GIF, and `gif_free` is the space left for GIFs.
 
 Pictures are never stored, so after the screen saver, a status message, a restart or switching modes, a tube goes black and is listed in `needed` until a picture is sent to it again. Over MQTT, the same two lists are `panel_tubes` and `panels_needed` in `clock/<id>/volatile/state`, as numbers with bit 0 for the leftmost tube, so Home Assistant can watch `panels_needed` and send the pictures again.
 
