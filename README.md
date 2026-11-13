@@ -3,7 +3,14 @@
 **Home Assistant on your six-tube clock.** HA Tubes is firmware for IPSTube and EleksTube-style IPS
 clocks that turns each of the six little screens into a display Home Assistant can draw on, plus a
 companion Home Assistant app, **Tube Display**, that designs, renders and rotates those screens for
-you. It keeps everything the original clock firmware does and adds firmware updates over Wi-Fi.
+you, and firmware updates over Wi-Fi.
+
+The recommended build is **IPSTube, Home Assistant only**, for an IPSTube whose screens come from
+Home Assistant. It keeps the clock's own time, date, clock faces, slide shows, LEDs and screen saver,
+and leaves out its OpenWeatherMap weather (Home Assistant has the weather) so there's more memory for
+pictures, GIFs and transitions. The web installer chooses it for you. Standard builds, with the weather,
+are there for other clocks and for clocks used without Home Assistant; see
+[Builds](#builds).
 
 HA Tubes is based on [EleksTubeIPS](https://github.com/judge2005/EleksTubeIPS) by Paul Andrews
 (judge2005), used under the MIT licence. See [Credits](#credits).
@@ -51,7 +58,11 @@ two GPUs' load and memory (bottom). Rendered by the app, they look like this:*
   * an entity picker, colour thresholds and a condition builder
   * a gallery of ready-made screens, import and export, and a YAML view
 * Home Assistant entities and actions to show a screen, flash a message, pause, and turn rotation on
-  or off; night mode dims the clock after sunset.
+  or off.
+* A **Brightness** card: day and night brightness that follows the sun, dimmer screens and quiet
+  hours at night.
+* Offers each new HA Tubes release to the clock's **Firmware** update entity, and pauses while the
+  clock updates.
 
 ![The Tube Display screen editor](docs/ha-tubes/editor.webp)
 
@@ -61,7 +72,8 @@ two GPUs' load and memory (bottom). Rendered by the app, they look like this:*
 * Three ways to update:
   * upload a `.bin` on the clock's **Info** page
   * `curl --data-binary @firmware.bin http://<clock>/update`
-  * press **Install** on the clock's **Firmware** update entity in Home Assistant
+  * press **Install** on the clock's **Firmware** update entity in Home Assistant (the Tube Display
+    app offers each new release there)
 * Optional MD5 check, progress on the tubes and in Home Assistant, automatic restart into the new
   firmware.
 * The file system image (web UI, built-in faces and icons) can be updated over Wi-Fi too
@@ -69,28 +81,41 @@ two GPUs' load and memory (bottom). Rendered by the app, they look like this:*
 
 ### A refreshed web UI
 * A new HA Tubes theme in light and dark, a regrouped menu, and new **Panels** and **About** pages.
+  The screenshots are from the Home Assistant-only build.
 
 <img src="docs/ui/clock.webp" alt="The Clock page" width="250"> <img src="docs/ui/menu.webp" alt="The menu" width="250"> <img src="docs/ui/panels.webp" alt="The Panels page" width="250">
 
-### Everything from the original firmware
-* Time, date, weather forecast and slide show display modes, with NTP time sync and automatic time
-  zone / DST handling.
-* Clock faces and weather icon sets you can upload, select and switch with the buttons.
+### Kept from the original firmware
+* Time, date and slide show display modes, with NTP time sync and automatic time zone / DST
+  handling. The clock's own time is what shows when Tube Display pauses or has a `clock` entry in its
+  rotation.
+* Clock faces and slide shows you can upload and choose (on the four-button clocks, with the
+  buttons too).
 * LED backlight effects, a digital-rain screen saver, and on/off hours.
 * MQTT with Home Assistant discovery for every setting, custom text, file uploads and motion/light
   sensors.
-* Builds for EleksTube v1, Si Hai, NovelLife SE, PCBWay "Punkcyber" and IPSTube clocks. Wi-Fi updates
-  need the 8 MB IPSTube boards.
+
+### Builds
+
+| Build | For | Web installer choice |
+|---|---|---|
+| `ipstube_ha` | **Recommended.** An IPSTube (H401, H402) used through Home Assistant. No weather of its own, one web UI browser at a time, more free memory. | IPSTube, Home Assistant only |
+| `ipstube` | An IPSTube used on its own, with the clock's OpenWeatherMap weather display. | IPSTube, standard |
+| `ipstube_dim` | An IPSTube with the hardware dimming mod. | IPSTube with hardware dimming |
+| `elekstubev1`, `elekstubev2`, `sihai`, `novellifese`, `punkcyber` | Other clocks, with the weather. They have 4 MB of flash, so they can't update over Wi-Fi. | Other clocks |
+
+The two IPSTube builds use the same flash layout and file system, so you can switch between them with
+a normal Wi-Fi update and keep your settings. Where the [User Guide](docs/user-guide.md) describes the
+weather, it applies only to the standard builds.
 
 ## Install the firmware
 
 1. **First install, over USB.** Open the [web installer](https://nict41.github.io/HA-Tubes/) in Chrome
-   or Edge on a computer, pick your clock and choose **Full install**.
-   * IPSTube: hold the clock's power button while plugging in the USB cable.
-   * An IPSTube used only through Home Assistant can take **IPSTube, Home Assistant only**: the same
-     firmware without the clock's own weather (Home Assistant has the weather), which leaves more
-     memory free for pictures and GIFs. Its web UI and its Home Assistant entities leave the weather
-     settings out too. You can switch between the two later with a normal Wi-Fi update.
+   or Edge on a computer. **IPSTube, Home Assistant only** is already chosen; choose **Full install**.
+   * Hold the clock's power button while plugging in the USB cable.
+   * For another clock, or an IPSTube you'll use without Home Assistant, pick it under the other
+     builds instead (see [Builds](#builds) and
+     [The Home Assistant-only build](docs/user-guide.md#the-home-assistant-only-build)).
    * Back up the original firmware first if you might want it back (see
      [Installation](https://github.com/judge2005/EleksTubeIPS/wiki/Installation) in the original
      project's wiki).
@@ -108,11 +133,11 @@ page. For an IPSTube they go at these addresses:
 
 | Address | File |
 |---|---|
-| 0x1000 | bootloader |
-| 0x8000 | partitions |
-| 0xE000 | boot_app0 |
-| 0x10000 | firmware |
-| 0x410000 | file system |
+| 0x1000 | `bootloader8MB.bin` |
+| 0x8000 | `partitions8MB.bin` |
+| 0xE000 | `boot_app0.bin` |
+| 0x10000 | `firmware-ipstube_ha-<version>.bin` (or the build you chose) |
+| 0x410000 | `littlefs8MB-<version>.bin` |
 
 ## Connect it to Home Assistant
 
@@ -127,8 +152,10 @@ page. For an IPSTube they go at these addresses:
       **Repositories** and add `https://github.com/nict41/nict41-s-HA-Apps`.
    2. Find **Tube Display**, install it, and on its **Configuration** tab set:
       * `clock_host`: the clock's IP address
-      * `clock_mqtt_id`: shown on the clock's MQTT page, e.g. `209374ipstube`
+      * `clock_mqtt_id`: shown on the clock's MQTT page, e.g. `A1B2C3ipstube`
       * `clock_user` / `clock_password`, if the clock's web UI has a login
+      * `firmware_variant`: `ipstube_ha`, the build you installed, so it offers you the right
+        firmware updates
    3. Start it, and turn on **Show in sidebar**.
 3. Open **Tube Display** from the sidebar to build screens:
    1. Add a screen and tap a tube.
@@ -167,10 +194,10 @@ Full app documentation: the app's **Documentation** tab, or
 
 ## Building
 
-The firmware is a [PlatformIO](https://platformio.org/) project. `pio run -e ipstube` builds the IPSTube
-firmware. `pio run -e ipstube -t buildfs` builds its file system image, including the web UI from
-`web/` (needs Node.js). Every pull request is built for all clocks in CI, and any compiler warning
-fails the build.
+The firmware is a [PlatformIO](https://platformio.org/) project. `pio run -e ipstube_ha` builds the
+recommended IPSTube firmware, and `pio run -e ipstube_ha -t buildfs` its file system image,
+including the web UI from `web/` (needs Node.js). Every pull request is built for all clocks in
+CI, and any compiler warning fails the build.
 
 ## Credits
 

@@ -596,6 +596,23 @@ void onWeatherColorChanged(ConfigItem<T> &item) {
 
 bool menuDrawn = false;
 
+// The display the clock's button moves on to: time, date, weather, slide show, then the time again.
+// PANELS is only chosen from the web UI or MQTT, so it's skipped, and so is the weather in the Home
+// Assistant-only build (otherwise the press would land on it, fall back to the time and never reach
+// the slide show).
+int nextButtonDisplay(int display) {
+	display = (display + 1) % (IPSClock::PANELS + 1);
+#ifdef HA_ONLY
+	if (display == IPSClock::WEATHER) {
+		display++;
+	}
+#endif
+	if (display == IPSClock::PANELS) {
+		display = IPSClock::TIME;
+	}
+	return display;
+}
+
 void onButtonEvent(const Button *button, Button::Event evt) {
 	// Any event will reset the screensaver timer, which will turn it off if it was visible
 	bool screenSaverWasOn = screenSaver->reset();
@@ -664,11 +681,7 @@ void onButtonEvent(const Button *button, Button::Event evt) {
 					return;
 				}
 
-				// PANELS is only chosen from the web UI or MQTT, so skip it
-				dateOrTime.value = (dateOrTime.value + 1) % (IPSClock::PANELS + 1);
-				if (dateOrTime.value == IPSClock::PANELS) {
-					dateOrTime.value = IPSClock::TIME;
-				}
+				dateOrTime.value = nextButtonDisplay(dateOrTime.value);
 				dateOrTime.put();
 				broadcastUpdate(dateOrTime);
 				dateOrTime.notify();
@@ -695,11 +708,7 @@ void onButtonEvent(const Button *button, Button::Event evt) {
 			return;
 		}
 
-		// PANELS is only chosen from the web UI or MQTT, so skip it
-		dateOrTime.value = (dateOrTime.value + 1) % (IPSClock::PANELS + 1);
-		if (dateOrTime.value == IPSClock::PANELS) {
-			dateOrTime.value = IPSClock::TIME;
-		}
+		dateOrTime.value = nextButtonDisplay(dateOrTime.value);
 		dateOrTime.put();
 		broadcastUpdate(dateOrTime);
 		dateOrTime.notify();

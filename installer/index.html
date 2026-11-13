@@ -128,6 +128,21 @@
   .model input { margin: 4px 0 0; accent-color: var(--accent); }
   .model span { display: block; }
   .model .detail { font-size: 0.875rem; color: var(--muted); }
+  .model.recommended { grid-column: 1 / -1; }
+  .model span.badge {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 600;
+    vertical-align: 2px;
+  }
+  details.others { margin-top: 12px; }
+  details.others summary { cursor: pointer; color: var(--muted); font-size: 0.9375rem; }
+  details.others .models { margin-top: 10px; }
 
   .options {
     display: grid;
@@ -208,16 +223,23 @@
 
   <section>
     <h2><span class="step">2</span>Choose your clock</h2>
-    <fieldset class="models">
+    <fieldset>
       <legend>Clock</legend>
-      <label class="model"><input type="radio" name="model" value="elekstubev1"><span><span>EleksTube IPS V1</span><span class="detail">and Xunfeng IPS</span></span></label>
-      <label class="model"><input type="radio" name="model" value="elekstubev2"><span><span>EleksTube IPS V2</span></span></label>
-      <label class="model"><input type="radio" name="model" value="novellifese"><span><span>NovelLife SE</span></span></label>
-      <label class="model"><input type="radio" name="model" value="sihai"><span><span>Si Hai</span></span></label>
-      <label class="model"><input type="radio" name="model" value="punkcyber"><span><span>PCBWay PunkCyber</span><span class="detail">RGB Glow Tube DIY Clock</span></span></label>
-      <label class="model"><input type="radio" name="model" value="ipstube"><span><span>IPSTube</span><span class="detail">H401, H402</span></span></label>
-      <label class="model"><input type="radio" name="model" value="ipstube_ha"><span><span>IPSTube, Home Assistant only</span><span class="detail">H401, H402 used only through Home Assistant: no weather of its own, more free memory</span></span></label>
-      <label class="model"><input type="radio" name="model" value="ipstube_dim"><span><span>IPSTube with hardware dimming</span></span></label>
+      <div class="models">
+        <label class="model recommended"><input type="radio" name="model" value="ipstube_ha" checked><span><span>IPSTube, Home Assistant only<span class="badge">Recommended</span></span><span class="detail">H401, H402, with screens from Home Assistant's Tube Display app. Keeps the clock's time, faces, slide shows, LEDs and screen saver; leaves out the clock's own weather (Home Assistant has it) for more free memory. One web UI browser at a time.</span></span></label>
+      </div>
+      <details class="others">
+        <summary>Other clocks and builds</summary>
+        <div class="models">
+          <label class="model"><input type="radio" name="model" value="ipstube"><span><span>IPSTube, standard</span><span class="detail">H401, H402 used on their own, with the clock's OpenWeatherMap weather</span></span></label>
+          <label class="model"><input type="radio" name="model" value="ipstube_dim"><span><span>IPSTube with hardware dimming</span></span></label>
+          <label class="model"><input type="radio" name="model" value="elekstubev1"><span><span>EleksTube IPS V1</span><span class="detail">and Xunfeng IPS</span></span></label>
+          <label class="model"><input type="radio" name="model" value="elekstubev2"><span><span>EleksTube IPS V2</span></span></label>
+          <label class="model"><input type="radio" name="model" value="novellifese"><span><span>NovelLife SE</span></span></label>
+          <label class="model"><input type="radio" name="model" value="sihai"><span><span>Si Hai</span></span></label>
+          <label class="model"><input type="radio" name="model" value="punkcyber"><span><span>PCBWay PunkCyber</span><span class="detail">RGB Glow Tube DIY Clock</span></span></label>
+        </div>
+      </details>
     </fieldset>
     <p class="hint">Some clocks sold as an EleksTube IPS V2 need the V1 firmware. If every display shows the same digit after installing, install the other EleksTube version with Upgrade. Your settings are kept.</p>
   </section>
@@ -227,7 +249,7 @@
     <div class="options">
       <div class="option">
         <h3>Upgrade</h3>
-        <p>For a clock that already runs this firmware, 1.9.4 or later. Installs only the firmware, so your settings, Wi-Fi details and uploaded images are kept.</p>
+        <p>For a clock that already runs HA Tubes (or EleksTubeIPS 1.9.4 or later, on clocks other than the IPSTube), or to switch between the IPSTube builds. Installs only the firmware, so your settings, Wi-Fi details and uploaded images are kept. An IPSTube coming from EleksTubeIPS or its original firmware needs a Full install once.</p>
         <p class="note">When asked, leave <strong>Erase device</strong> unticked. Erasing removes everything, and the clock won't start again until you do a full install.</p>
         <p class="files" data-files="firmware-only"></p>
         <esp-web-install-button data-kind="firmware-only">
@@ -238,7 +260,7 @@
       </div>
       <div class="option">
         <h3>Full install</h3>
-        <p>For a clock running its original firmware, or to start over. Also installs the default clock faces, weather icons and slide shows, replacing any you've uploaded.</p>
+        <p>For a clock running its original firmware, or to start over. Also installs the built-in clock faces, icons and slide shows, replacing any you've uploaded. On an IPSTube it sets up the two firmware slots for updates over Wi-Fi.</p>
         <p class="note">On a first install, tick <strong>Erase device</strong> when asked. Leave it unticked to keep your settings and Wi-Fi details.</p>
         <p class="files" data-files="full"></p>
         <esp-web-install-button data-kind="full">
@@ -248,12 +270,12 @@
         </esp-web-install-button>
       </div>
     </div>
-    <p class="hint" id="choose-hint">Choose your clock to turn on these buttons.</p>
+    <p class="hint" id="choose-hint" hidden>Choose your clock to turn on these buttons.</p>
   </section>
 
   <section>
     <h2><span class="step">4</span>Connect to Wi-Fi</h2>
-    <p>If the clock doesn't have your Wi-Fi details yet, <a href="https://github.com/$repository$/blob/main/docs/user-guide.md#connecting-to-wi-fi">Connecting to WiFi</a> in the wiki walks you through it. After that, open the clock's web page to set it up.</p>
+    <p>If the clock doesn't have your Wi-Fi details yet, <a href="https://github.com/$repository$/blob/main/docs/user-guide.md#connecting-to-wi-fi">Connecting to Wi-Fi</a> in the user guide walks you through it. Then enter your MQTT broker on the clock's MQTT page and install the Tube Display app, as the <a href="https://github.com/$repository$#connect-it-to-home-assistant">README</a> describes.</p>
   </section>
 
   <footer>
@@ -294,12 +316,12 @@
     });
   }
 
-  // A link such as …/#ipstube opens with that clock chosen
+  // A link such as …/#ipstube opens with that clock chosen; otherwise the recommended build is
   const linked = [...radios].find((radio) => radio.value === location.hash.slice(1));
-  if (linked) {
-    linked.checked = true;
-    choose(linked.value);
-  }
+  const chosen = linked || [...radios].find((radio) => radio.checked);
+  chosen.checked = true;
+  chosen.closest("details")?.setAttribute("open", "");
+  choose(chosen.value);
 </script>
 </body>
 </html>
