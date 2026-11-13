@@ -699,7 +699,8 @@ void TFTs::setPanelNeeded(uint8_t panel) {
  * (high byte first), row by row, as sent to /panel. Unlike drawImage() this doesn't use the
  * shared sprite, so the web server task can call it while the clock task is drawing.
  */
-void TFTs::drawPanelRows(uint8_t panel, int16_t x, int16_t y, int16_t w, int16_t h, const uint8_t *rgb565be) {
+void TFTs::drawPanelRows(uint8_t panel, int16_t x, int16_t y, int16_t w, int16_t h, const uint8_t *rgb565be,
+    uint16_t shade) {
   if (panel >= NUM_DIGITS || w <= 0 || h <= 0 || rgb565be == NULL) {
     return;
   }
@@ -707,9 +708,28 @@ void TFTs::drawPanelRows(uint8_t panel, int16_t x, int16_t y, int16_t w, int16_t
   // A few rows at a time, dimmed like the images loaded from files are. Each pushImage() sets the
   // display's window first, so pushing several rows per call is much quicker than one by one.
   // Static rather than on the stack (the GIF player calls this deep in its decoder): it's only
-  // used holding claim(), so the tasks that draw panels never share it at the same time.
+  // used holding claim(), so the tasks that draw panels never share it at the same time. Words, as
+  // pushPixels() reads it 32 bits at a time.
   static const int16_t CHUNK_ROWS = 4;
-  static uint16_t chunk[TFT_WIDTH * CHUNK_ROWS];
+  static uint32_t chunkWords[(TFT_WIDTH * CHUNK_ROWS + 1) / 2];
+  uint8_t *chunk = (uint8_t*)chunkWords;
+
+  // How much to darken: 256 = not at all. The same as dimColor(), with the shade on top.
+#ifdef DIM_WITH_TFT_BACKLIGHT_PIN
+  uint32_t f = shade;
+#else
+  uint32_t f = ((dimming == 255 ? 256u : (uint32_t)dimming) * shade) >> 8;
+#endif
+  if (f < 256 && f != dimFactor) {
+    for (uint32_t i = 0; i < 32; i++) {
+      dimRed[i] = (uint16_t)(((i * f) >> 8) << 11);
+      dimBlue[i] = (uint16_t)((i * f) >> 8);
+    }
+    for (uint32_t i = 0; i < 64; i++) {
+      dimGreen[i] = (uint16_t)(((i * f) >> 8) << 5);
+    }
+    dimFactor = (uint16_t)f;
+  }
 
   claim();
 #ifdef USE_DMA
@@ -718,20 +738,32 @@ void TFTs::drawPanelRows(uint8_t panel, int16_t x, int16_t y, int16_t w, int16_t
   }
 #endif
   chip_select.setDigit(panelToDigit(panel));
+  panelDraws[panel]++;
 
-  // Like LoadImageBytesIntoSprite(): native uint16_t pixels with swap on send the high byte first
+  // The bytes are already in the order the display takes them, high byte first
   bool oldSwapBytes = getSwapBytes();
-  setSwapBytes(true);
+  setSwapBytes(false);
 
-  int16_t perChunk = (int16_t)((TFT_WIDTH * CHUNK_ROWS) / w);
-  for (int16_t r = 0; r < h; r += perChunk) {
-    int16_t n = h - r < perChunk ? h - r : perChunk;
-    const uint8_t *src = rgb565be + (size_t)r * w * 2;
-    size_t count = (size_t)n * w;
-    for (size_t i = 0; i < count; i++) {
-      chunk[i] = dimColor((uint16_t)((src[i * 2] << 8) | src[i * 2 + 1]));
+  if (f >= 256 && x == 0 && w == TFT_WIDTH && ((uintptr_t)rgb565be & 3) == 0) {
+    pushImage(x, y, w, h, (uint16_t*)rgb565be);	// As they are: straight from where they are
+  } else {
+    int16_t perChunk = (int16_t)((TFT_WIDTH * CHUNK_ROWS) / w);
+    for (int16_t r = 0; r < h; r += perChunk) {
+      int16_t n = h - r < perChunk ? h - r : perChunk;
+      const uint8_t *src = rgb565be + (size_t)r * w * 2;
+      size_t count = (size_t)n * w;
+      if (f >= 256) {
+        memcpy(chunk, src, count * 2);
+      } else {
+        for (size_t i = 0; i < count; i++) {
+          uint16_t c = (uint16_t)((src[i * 2] << 8) | src[i * 2 + 1]);
+          uint16_t v = (uint16_t)(dimRed[c >> 11] | dimGreen[(c >> 5) & 63] | dimBlue[c & 31]);
+          chunk[i * 2] = (uint8_t)(v >> 8);
+          chunk[i * 2 + 1] = (uint8_t)v;
+        }
+      }
+      pushImage(x, y + r, w, n, (uint16_t*)chunk);
     }
-    pushImage(x, y + r, w, n, chunk);
   }
 
   setSwapBytes(oldSwapBytes);

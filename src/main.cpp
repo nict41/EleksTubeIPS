@@ -1948,8 +1948,10 @@ static const char *panelParseTransition(AsyncWebServerRequest *request, PanelDra
 		t.kind = PanelDraw::WIPE;
 	} else if (kind == "cascade") {
 		t.kind = PanelDraw::CASCADE;
+	} else if (kind == "flip") {
+		t.kind = PanelDraw::FLIP;
 	} else if (kind != "none") {
-		return "transition must be none, wipe or cascade";
+		return "transition must be none, wipe, cascade or flip";
 	}
 	if (request->hasArg("duration")) {
 		long v = request->arg("duration").toInt();
@@ -2299,7 +2301,11 @@ void panelHandler(AsyncWebServerRequest *request) {
 	json += "],\"width\":" + String(TFT_WIDTH) + ",\"height\":" + String(TFT_HEIGHT)
 		+ ",\"formats\":[\"rgb565\",\"qoi\",\"jpeg\"],\"batch\":true,\"batch_buffer\":"
 		+ String((unsigned long)PanelDraw::bufferFree())
-		+ ",\"transitions\":[\"wipe\",\"cascade\"],\"drawing\":" + String(PanelDraw::busy() ? "true" : "false")
+		+ ",\"transitions\":[\"wipe\",\"cascade\",\"flip\"],\"flip_memory\":"
+		+ String((unsigned long)PanelDraw::flipMemory())
+		+ ",\"last_flip\":{\"folded\":" + String(PanelDraw::lastFlipFoldedTubes())
+		+ ",\"frames\":" + String(PanelDraw::lastFlipFrameCount()) + "}"
+		+ ",\"drawing\":" + String(PanelDraw::busy() ? "true" : "false")
 		+ ",\"last_draw_ms\":" + String((unsigned long)PanelDraw::lastDurationMs())
 #ifdef HA_ONLY
 		+ ",\"weather\":false"	// For the web UI, which hides the weather settings then

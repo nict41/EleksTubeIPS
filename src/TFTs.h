@@ -80,8 +80,12 @@ public:
   void clearPanelNeeded(uint8_t panel);
   void setPanelNeeded(uint8_t panel);           // An unfinished picture: the tube needs a fresh one
   // Draws h full rows of w pixels at (x, y) on a panel tube. rgb565be holds w*h pixels in RGB565,
-  // big-endian (high byte first), row by row.
-  void drawPanelRows(uint8_t panel, int16_t x, int16_t y, int16_t w, int16_t h, const uint8_t *rgb565be);
+  // big-endian (high byte first), row by row. shade darkens them too (256 = not at all), for the flip.
+  void drawPanelRows(uint8_t panel, int16_t x, int16_t y, int16_t w, int16_t h, const uint8_t *rgb565be,
+    uint16_t shade = 256);
+  // Goes up every time anything is drawn on a panel tube, so the flip transition can tell whether the
+  // picture it kept of a tube is still the one showing
+  uint32_t panelDrawCount(uint8_t panel) { return panel < NUM_DIGITS ? panelDraws[panel] : 0; }
   void drawStatus();                            // Draws the status message on the selected tube, if any
 
   void animateRain();
@@ -132,6 +136,10 @@ private:
   // Bit i set when panel tube i needs a fresh picture. Touched from the clock task and the web
   // server task, so only changed while holding the mutex, see claim()/release().
   volatile uint8_t panelsNeeded = 0;
+  volatile uint32_t panelDraws[NUM_DIGITS] = { 0 };	// See panelDrawCount()
+  // drawPanelRows()'s dimming (and shading): each channel's value, dimmed and in place, for `dimFactor`
+  uint16_t dimRed[32], dimGreen[64], dimBlue[32];
+  uint16_t dimFactor = 0xFFFF;
 
   unsigned long statusTime = 0;
   unsigned long statusDuration = 5000;

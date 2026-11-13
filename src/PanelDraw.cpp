@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <esp_heap_caps.h>
+#include <math.h>
 
 #include "PanelDraw.h"
 #include "PanelBatch.h"
@@ -12,6 +13,7 @@
 extern TFTs *tfts;
 extern void requestMqttPublish();
 extern SemaphoreHandle_t memMutex;
+extern TaskHandle_t weatherTask;	// NULL in the Home Assistant-only build
 
 namespace PanelDraw {
 
@@ -20,6 +22,9 @@ namespace PanelDraw {
 #define TUBE_SLOTS (6 + 1)		// One per tube in a transition, and one for drawing straight away
 #define MS_PER_TUBE 40			// Roughly what decoding and drawing a whole tube takes
 #define TEST_HOLD_MS 3000		// How long the test pattern stays before the tubes ask for their pictures again
+#define HINGE (TFT_HEIGHT / 2)	// The flip's hinge: the first row of the bottom half
+#define KEEP_SLOT 5120			// Bytes of IRAM per tube for the top half of its picture, see keep()
+#define BOUNCE 64				// Bytes read from IRAM at a time
 
 using PanelBatch::Record;
 using PanelBatch::RGB565;
@@ -32,10 +37,28 @@ struct TubeJob {
 	const Record *rec;
 	QoiStream qoi;
 	uint32_t pos;		// Bytes of a QOI picture fed to the decoder
+	uint32_t halfPos;	// Bytes of a whole-tube QOI picture that hold its top half (0: not got there)
 	int16_t rows;		// Rows drawn
-	uint16_t rowBytes;	// Bytes of the row being decoded
-	uint8_t row[TFT_WIDTH * 2];
+	uint8_t row[TFT_WIDTH * 2];	// The row being decoded
 	bool done;
+	// The flip
+	bool flipOld;		// Folding the old top half (else uncovering the new one behind a dark edge)
+	bool flipStarted;
+	int16_t flipLast;	// Height of the fold drawn last, or -1
+	uint8_t flipPhase;	// 1: the top half, 2: the bottom half
+};
+
+// Draws half a tube's picture squashed into fewer rows, as a flap seen at an angle: the rows of the
+// picture arrive in order, and each one that lands on a screen row is drawn, shaded
+struct Squash {
+	uint8_t tube;
+	int16_t y0;			// Screen row of the first row drawn
+	int16_t n;			// Rows drawn, 0 to HINGE
+	int16_t next;		// Next of them to draw
+	int16_t src;		// Rows of the half picture seen so far
+	uint16_t shade;		// 256 = as it is, less is darker
+	uint8_t strip;		// Rows waiting in the strip buffer
+	uint8_t row[TFT_WIDTH * 2];	// The row being decoded
 };
 
 struct Job {
@@ -46,8 +69,26 @@ struct Job {
 	uint8_t count;
 	bool test;			// The test pattern: shown for TEST_HOLD_MS, then the tubes are marked needed
 	TubeJob tubes[TUBE_SLOTS];
-	uint8_t rows[STRIP_ROWS * TFT_WIDTH * 2];
+	alignas(4) uint8_t rows[STRIP_ROWS * TFT_WIDTH * 2];	// Aligned: drawPanelRows() pushes it as it is
+	Squash squash;			// The flip's fold being drawn
+	QoiStream scratch;		// Decodes the half picture of a fold
+	uint8_t bounce[BOUNCE];	// Bytes of a kept picture, copied out of IRAM
 };
+
+/*
+ * The flip's old pictures. When a tube gets a whole QOI picture, the bytes that hold its top half
+ * (2 to 5 KB for a typical screen) are kept here, one slot per tube, so the next flip can fold them.
+ * In IRAM, which nothing else uses (tens of KB of it are free), so no heap or display buffer: IRAM can
+ * only be read and written 32 bits at a time, so the bytes go in and out a word at a time.
+ * `draws` is the tube's TFTs::panelDrawCount() once the picture was drawn: if anything has drawn on
+ * the tube since, the picture showing isn't this one any more.
+ */
+struct Kept {
+	uint16_t len;	// 0: none
+	uint32_t draws;
+};
+static volatile uint32_t *keepArena = NULL;	// 6 slots of KEEP_SLOT bytes
+static Kept kept[6];
 
 /*
  * Where a batch is held. Normally in the display buffer (StaticSprite::output_buffer, 64.8 KB), which
@@ -72,6 +113,8 @@ static volatile bool running = false;		// From start() until the task has freed 
 static volatile bool stopRequested = false;
 static volatile uint32_t endsAt = 0;		// millis() when the batch should be drawn, roughly
 static volatile uint32_t lastDrawMs = 0;	// How long the last batch took to draw
+static volatile uint8_t lastFlipFolded = 0;	// Tubes of the last flip that folded their old picture
+static volatile uint16_t lastFlipFrames = 0;	// Frames drawn in the last flip, all tubes together
 
 // Decoded rows of the record being decoded, waiting to be drawn: in the job, as static memory is
 // short, see Job::rows
@@ -80,6 +123,48 @@ static uint8_t rowCount = 0;
 
 static bool isWholeTube(const Record &r) {
 	return PanelBatch::isWholeTube(r, TFT_WIDTH, TFT_HEIGHT);
+}
+
+size_t flipMemory() {
+	return keepArena != NULL ? 6 * KEEP_SLOT : 0;
+}
+
+// Keeps the first len bytes of a tube's picture, which hold its top half. Call once it's drawn.
+static void keep(uint8_t tube, const uint8_t *data, size_t len) {
+	if (tube >= 6) {
+		return;
+	}
+	kept[tube].len = 0;
+	if (keepArena == NULL || len == 0 || len > KEEP_SLOT) {
+		return;		// Too big for its slot (a photo): the next flip uncovers this tube instead
+	}
+	volatile uint32_t *dst = keepArena + (size_t)tube * (KEEP_SLOT / 4);
+	for (size_t i = 0; i < len; i += 4) {
+		uint32_t w = 0;
+		for (size_t b = 0; b < 4 && i + b < len; b++) {
+			w |= (uint32_t)data[i + b] << (8 * b);
+		}
+		*dst++ = w;
+	}
+	kept[tube].len = (uint16_t)len;
+	kept[tube].draws = tfts->panelDrawCount(tube);
+}
+
+// A whole tube finished drawing: keeps its top half for the next flip, if it's a QOI picture
+static void finishTube(TubeJob *tj) {
+	const Record *r = tj->rec;
+	if (isWholeTube(*r) && r->format == QOI && tj->halfPos > 0) {
+		keep(r->tube, r->data, tj->halfPos);
+	} else if (r->tube < 6) {
+		kept[r->tube].len = 0;
+	}
+}
+
+// The tube still shows the picture kept of it
+static bool keptShowing(uint8_t tube) {
+	return tube < 6 && keepArena != NULL && kept[tube].len > 0
+		&& kept[tube].draws == tfts->panelDrawCount(tube)
+		&& (tfts->getPanelsNeeded() & (1 << tube)) == 0;
 }
 
 void wholeTubeReplaced(uint8_t tube) {
@@ -100,30 +185,27 @@ static void flushRows(TubeJob *tj) {
 	rowCount = 0;
 }
 
-static void putPixel(void *ctx, uint8_t red, uint8_t green, uint8_t blue) {
+// A decoded row of a record (QoiStream::rowOutput()), waiting in the strip to be drawn
+static void putRow(void *ctx, const uint8_t *row) {
 	TubeJob *tj = (TubeJob*)ctx;
 	size_t rowLen = (size_t)tj->rec->w * 2;
-	uint16_t c = (uint16_t)(((red & 0xF8) << 8) | ((green & 0xFC) << 3) | (blue >> 3));
-	tj->row[tj->rowBytes++] = (uint8_t)(c >> 8);
-	tj->row[tj->rowBytes++] = (uint8_t)(c & 0xFF);
-	if (tj->rowBytes == rowLen) {
-		memcpy(rows + (size_t)rowCount * rowLen, tj->row, rowLen);
-		tj->rowBytes = 0;
-		rowCount++;
-		if (rowCount == STRIP_ROWS) {
-			flushRows(tj);
-		}
+	memcpy(rows + (size_t)rowCount * rowLen, row, rowLen);
+	rowCount++;
+	if (rowCount == STRIP_ROWS) {
+		flushRows(tj);
 	}
 }
 
 static void tubeJobBegin(TubeJob *tj, const Record *r) {
 	tj->rec = r;
 	tj->pos = 0;
+	tj->halfPos = 0;
 	tj->rows = 0;
-	tj->rowBytes = 0;
 	tj->done = false;
+	tj->flipStarted = false;
 	if (r->format == QOI) {
 		tj->qoi.begin((uint16_t)r->w, (uint16_t)r->h);
+		tj->qoi.rowOutput(tj->row, putRow, tj);
 	}
 }
 
@@ -203,23 +285,207 @@ static void advance(TubeJob *tj, int16_t target) {
 		return;
 	}
 
+	// Exactly down to the target row, pausing at the hinge on the way to note where the top half's
+	// bytes end (for keep(), and the flip carries on from there)
 	rowCount = 0;
-	// A few bytes at a time when only part of it is wanted now (a wipe), so it stops close to
-	// the target; all of it at once otherwise
-	uint32_t step = target >= r->h ? r->len : 8;
-	while (tj->rows + rowCount < target && tj->pos < r->len) {
-		uint32_t n = r->len - tj->pos;
-		if (n > step) {
-			n = step;
+	uint32_t want = (uint32_t)target * r->w;
+	uint32_t half = (uint32_t)HINGE * r->w;
+	bool whole = isWholeTube(*r);
+	bool ended = false;		// Malformed, or the bytes ran out
+	while (tj->qoi.pixels() < want) {
+		uint32_t limit = want;
+		if (whole && tj->halfPos == 0 && tj->qoi.pixels() < half && limit > half) {
+			limit = half;
 		}
-		QoiStream::Result res = tj->qoi.feed(r->data + tj->pos, n, putPixel, tj);
-		tj->pos += n;
-		if (res == QoiStream::ERROR) {
-			tj->pos = r->len;	// Malformed: what was decoded stays
+		QoiStream::Result res;
+		size_t used = tj->qoi.feedUntil(r->data + tj->pos, r->len - tj->pos, limit, NULL, NULL, &res);
+		tj->pos += used;
+		if (whole && tj->halfPos == 0 && tj->qoi.pixels() == half) {
+			tj->halfPos = tj->pos;
+		}
+		if (res == QoiStream::DONE) {
+			break;
+		}
+		if (res == QoiStream::ERROR || (tj->qoi.pixels() < limit && tj->pos >= r->len)) {
+			ended = true;	// What was decoded stays
+			break;
 		}
 	}
 	flushRows(tj);
-	tj->done = tj->qoi.complete() || tj->pos >= r->len;
+	tj->done = tj->qoi.complete() || ended;
+}
+
+// --- The flip -------------------------------------------------------------------------------
+
+static void squashFlush(Job *j) {
+	Squash *s = &j->squash;
+	if (s->strip == 0) {
+		return;
+	}
+	tfts->drawPanelRows(s->tube, 0, (int16_t)(s->y0 + s->next - s->strip), TFT_WIDTH, s->strip, j->rows, s->shade);
+	s->strip = 0;
+}
+
+// The next row of the half picture: drawn on each screen row it lands on (at most one)
+static void squashRow(Job *j, const uint8_t *row) {
+	Squash *s = &j->squash;
+	while (s->next < s->n && (int32_t)s->next * HINGE / s->n == s->src) {
+		// Shaded as it's drawn, see squashFlush()
+		memcpy(j->rows + (size_t)s->strip * TFT_WIDTH * 2, row, TFT_WIDTH * 2);
+		s->strip++;
+		s->next++;
+		if (s->strip == STRIP_ROWS) {
+			squashFlush(j);
+		}
+	}
+	s->src++;
+}
+
+static void squashRowOut(void *ctx, const uint8_t *row) {	// QoiStream::rowOutput()
+	squashRow((Job*)ctx, row);
+}
+
+static void squashBegin(Job *j, uint8_t tube, int16_t y0, int16_t n, uint16_t shade) {
+	Squash *s = &j->squash;
+	s->tube = tube;
+	s->y0 = y0;
+	s->n = n;
+	s->next = 0;
+	s->src = 0;
+	s->shade = shade;
+	s->strip = 0;
+}
+
+// Feeds QOI bytes to the scratch decoder until the fold is drawn, up to `limit` pixels in all
+static void squashFeed(Job *j, const uint8_t *data, size_t len, uint32_t limit) {
+	size_t off = 0;
+	while (off < len && j->squash.next < j->squash.n && j->scratch.pixels() < limit) {
+		size_t n = len - off < BOUNCE ? len - off : BOUNCE;	// Small steps, to stop soon after the last row
+		QoiStream::Result res;
+		size_t used = j->scratch.feedUntil(data + off, n, limit, NULL, NULL, &res);
+		off += used;
+		if (res != QoiStream::OK || used == 0) {
+			break;
+		}
+	}
+}
+
+// Folds the old top half: the kept picture, squashed into the h rows above the hinge
+static void foldOld(Job *j, uint8_t tube, int16_t h, uint16_t shade) {
+	squashBegin(j, tube, (int16_t)(HINGE - h), h, shade);
+	j->scratch.begin(TFT_WIDTH, TFT_HEIGHT);
+	j->scratch.rowOutput(j->squash.row, squashRowOut, j);
+	const volatile uint32_t *src = keepArena + (size_t)tube * (KEEP_SLOT / 4);
+	size_t len = kept[tube].len;
+	uint32_t limit = (uint32_t)HINGE * TFT_WIDTH;
+	for (size_t off = 0; off < len && j->squash.next < h && j->scratch.pixels() < limit; off += BOUNCE) {
+		size_t n = len - off < BOUNCE ? len - off : BOUNCE;
+		for (size_t w = 0; w < (n + 3) / 4; w++) {
+			uint32_t v = src[off / 4 + w];
+			j->bounce[w * 4] = (uint8_t)v;
+			j->bounce[w * 4 + 1] = (uint8_t)(v >> 8);
+			j->bounce[w * 4 + 2] = (uint8_t)(v >> 16);
+			j->bounce[w * 4 + 3] = (uint8_t)(v >> 24);
+		}
+		squashFeed(j, j->bounce, n, limit);
+	}
+	squashFlush(j);
+}
+
+// Folds the new bottom half: squashed into the h rows below the hinge. The tube's own decoder is
+// paused at the hinge, so a copy of it carries on from there.
+static void foldNew(Job *j, TubeJob *tj, int16_t h, uint16_t shade) {
+	const Record *r = tj->rec;
+	squashBegin(j, r->tube, HINGE, h, shade);
+	if (r->format == QOI) {
+		j->scratch = tj->qoi;
+		j->scratch.rowOutput(j->squash.row, squashRowOut, j);
+		squashFeed(j, r->data + tj->pos, r->len - tj->pos, (uint32_t)TFT_HEIGHT * TFT_WIDTH);
+	} else if (r->format == RGB565) {
+		for (int16_t y = HINGE; y < TFT_HEIGHT && j->squash.next < h; y++) {
+			squashRow(j, r->data + (size_t)y * TFT_WIDTH * 2);
+		}
+	} else if (r->format == PATTERN) {
+		for (int16_t y = HINGE; y < TFT_HEIGHT && j->squash.next < h; y++) {
+			for (int16_t x = 0; x < TFT_WIDTH; x++) {
+				uint16_t c = patternPixel(r->tube, (uint8_t)r->len, x, y);
+				j->squash.row[x * 2] = (uint8_t)(c >> 8);
+				j->squash.row[x * 2 + 1] = (uint8_t)(c & 0xFF);
+			}
+			squashRow(j, j->squash.row);
+		}
+	}
+	squashFlush(j);
+}
+
+// A dark edge across the tube at row y, 2 rows, above the hinge: where the old top half would be
+// folding, for a tube whose old picture wasn't kept
+static void darkEdge(Job *j, uint8_t tube, int16_t y) {
+	int16_t n = HINGE - y < 2 ? HINGE - y : 2;
+	if (n <= 0) {
+		return;
+	}
+	memset(j->rows, 0, (size_t)n * TFT_WIDTH * 2);
+	tfts->drawPanelRows(tube, 0, y, TFT_WIDTH, n, j->rows);
+}
+
+// One frame of a tube's flip, t from 0 to 1. Returns true once it's done.
+static bool flipFrame(Job *j, TubeJob *tj, float t) {
+	const Record *r = tj->rec;
+	if (!tj->flipStarted) {
+		tj->flipStarted = true;
+		tj->flipOld = keptShowing(r->tube);
+		if (tj->flipOld) {
+			lastFlipFolded++;
+		}
+		tj->flipLast = -1;
+		tj->flipPhase = 1;
+	}
+	if (t > 1) {
+		t = 1;
+	}
+	// The flap's angle from upright (0) to down (pi): slow to start, then faster, like it falls
+	float angle = (float)M_PI * (0.6f * t * t + 0.4f * t);
+	float c = cosf(angle);
+	if (tj->flipPhase == 1 && c > 0) {
+		// The top half: the old one folds down onto the hinge, uncovering the new one above it
+		int16_t h = (int16_t)lroundf(HINGE * c);
+		if (h == tj->flipLast) {
+			return false;
+		}
+		tj->flipLast = h;
+		lastFlipFrames++;
+		advance(tj, (int16_t)(HINGE - h));
+		if (tj->flipOld) {
+			foldOld(j, r->tube, h, (uint16_t)(256 * (0.55f + 0.45f * c)));
+		} else {
+			darkEdge(j, r->tube, (int16_t)(HINGE - h));
+		}
+		return false;
+	}
+	if (tj->flipPhase == 1) {
+		advance(tj, HINGE);		// All of the new top half
+		tj->flipPhase = 2;
+		tj->flipLast = -1;
+	}
+	// The bottom half: the new one folds down from the hinge over the old one
+	int16_t h = t >= 1 ? HINGE : (int16_t)lroundf(HINGE * -c);
+	if ((h != tj->flipLast || t >= 1) && h > 0) {	// The last frame always, unshaded
+		tj->flipLast = h;
+		lastFlipFrames++;
+		foldNew(j, tj, h, t >= 1 ? 256 : (uint16_t)(256 * (0.55f + 0.45f * -c)));
+	}
+	if (t >= 1) {
+		tj->rows = r->h;
+		tj->done = true;
+		return true;
+	}
+	return false;
+}
+
+// Whether a record can flip: the bottom half has to be drawn many times
+static bool canFlip(const Record &r) {
+	return r.format == QOI || r.format == RGB565 || r.format == PATTERN;
 }
 
 static bool aborted() {
@@ -265,6 +531,7 @@ static void runJob(Job *j) {
 		}
 		tubeJobBegin(now, &j->records[i]);
 		if (drawNow(now) && isWholeTube(j->records[i])) {
+			finishTube(now);
 			if (!j->test) {
 				wholeTubeReplaced(j->records[i].tube);
 			}
@@ -284,6 +551,7 @@ static void runJob(Job *j) {
 				vTaskDelay(1);
 			}
 			if (!aborted() && drawNow(ordered[k])) {
+				finishTube(ordered[k]);
 				if (!j->test) {
 					wholeTubeReplaced(ordered[k]->rec->tube);
 				}
@@ -319,9 +587,53 @@ static void runJob(Job *j) {
 				uint32_t target = (elapsed - start) * TFT_HEIGHT / each;
 				target = (target + STRIP_ROWS - 1) / STRIP_ROWS * STRIP_ROWS;	// Whole strips
 				advance(tj, (int16_t)(target > TFT_HEIGHT ? TFT_HEIGHT : target));
-				if (tj->done && !j->test) {
-					wholeTubeReplaced(tj->rec->tube);
-					publish = true;
+				if (tj->done) {
+					finishTube(tj);
+					if (!j->test) {
+						wholeTubeReplaced(tj->rec->tube);
+						publish = true;
+					}
+				}
+			}
+			if (!allDone) {
+				vTaskDelay(1);
+			}
+		}
+	} else if (n > 0 && j->t.kind == FLIP) {
+		// Each tube flips over durationMs, starting gapMs after the one before it
+		lastFlipFolded = 0;
+		lastFlipFrames = 0;
+		uint32_t each = j->t.durationMs > 0 ? j->t.durationMs : 1;
+		bool allDone = false;
+		while (!allDone && !aborted()) {
+			uint32_t elapsed = millis() - t0;
+			allDone = true;
+			for (uint8_t k = 0; k < n; k++) {
+				TubeJob *tj = ordered[k];
+				if (tj->done) {
+					continue;
+				}
+				allDone = false;
+				uint32_t start = (uint32_t)k * j->t.gapMs;
+				if (elapsed < start) {
+					continue;
+				}
+				if (!tfts->isPanelTube(tj->rec->tube)) {
+					tj->done = true;
+					continue;
+				}
+				bool finished;
+				if (canFlip(*tj->rec)) {
+					finished = flipFrame(j, tj, (float)(elapsed - start) / each);
+				} else {
+					finished = drawNow(tj);	// A JPEG is drawn whole, at its turn
+				}
+				if (finished && tj->done) {
+					finishTube(tj);
+					if (!j->test) {
+						wholeTubeReplaced(tj->rec->tube);
+						publish = true;
+					}
 				}
 			}
 			if (!allDone) {
@@ -380,7 +692,9 @@ static void drawTask(void *) {
 		}
 		if (cmd == CMD_RESERVE) {
 			bool ok = false;
-			if (!holdingMutex && !GifPlayer::active() && xSemaphoreTake(memMutex, 0) == pdTRUE) {
+			// The clock's loop holds the display buffer for a moment every time round: wait for that,
+			// but not past takeBuffer()'s 50 ms, so it doesn't give up and use the heap meanwhile
+			if (!holdingMutex && !GifPlayer::active() && xSemaphoreTake(memMutex, pdMS_TO_TICKS(30)) == pdTRUE) {
 				if (GifPlayer::active()) {	// One started meanwhile
 					xSemaphoreGive(memMutex);
 				} else {
@@ -426,6 +740,8 @@ void begin() {
 		// its priority drawing would get half the core at best). It sleeps between strips of a
 		// transition and after each tube, so they still get their turn.
 		xTaskCreatePinnedToCore(drawTask, "panel draw", 6144, NULL, 3, &task, 1);
+		// IRAM (executable memory), not the heap: see Kept
+		keepArena = (volatile uint32_t*)heap_caps_malloc(6 * KEEP_SLOT, MALLOC_CAP_EXEC);
 	}
 }
 
@@ -444,7 +760,10 @@ size_t bufferFree() {
 	if (running || displayReserved || task == NULL) {
 		return 0;
 	}
-	if (!GifPlayer::active() && xSemaphoreGetMutexHolder(memMutex) == NULL) {
+	// Not while the standard build's weather fetch holds the display buffer (for TLS, seconds at a
+	// time); the clock's task and MQTT only hold it for a moment, see CMD_RESERVE
+	TaskHandle_t holder = xSemaphoreGetMutexHolder(memMutex);
+	if (!GifPlayer::active() && (holder == NULL || holder != weatherTask)) {
 		return DISPLAY_BUFFER;
 	}
 	return heapFree();
@@ -517,7 +836,8 @@ const char *start(uint8_t *buf, size_t len, const Transition &t, int *code) {
 	j->t = t;
 	uint32_t drawing = (uint32_t)j->count * MS_PER_TUBE;
 	uint32_t transition = t.kind == WIPE ? t.durationMs
-		: t.kind == CASCADE ? (uint32_t)t.gapMs * (t.orderLen > 0 ? t.orderLen - 1 : 0) : 0;
+		: t.kind == CASCADE ? (uint32_t)t.gapMs * (t.orderLen > 0 ? t.orderLen - 1 : 0)
+		: t.kind == FLIP ? t.durationMs + (uint32_t)t.gapMs * (t.orderLen > 0 ? t.orderLen - 1 : 0) : 0;
 	endsAt = millis() + (transition > drawing ? transition : drawing) + 20;
 
 	running = true;
@@ -562,7 +882,8 @@ const char *startTest(const Transition &t, int *code) {
 	j->t = t;
 	j->test = true;
 	uint32_t transition = t.kind == WIPE ? t.durationMs
-		: t.kind == CASCADE ? (uint32_t)t.gapMs * (t.orderLen > 0 ? t.orderLen - 1 : 0) : 0;
+		: t.kind == CASCADE ? (uint32_t)t.gapMs * (t.orderLen > 0 ? t.orderLen - 1 : 0)
+		: t.kind == FLIP ? t.durationMs + (uint32_t)t.gapMs * (t.orderLen > 0 ? t.orderLen - 1 : 0) : 0;
 	uint32_t drawing = (uint32_t)j->count * MS_PER_TUBE;
 	endsAt = millis() + (transition > drawing ? transition : drawing) + TEST_HOLD_MS + 20;
 	running = true;
@@ -589,6 +910,15 @@ uint32_t msLeft() {
 uint32_t lastDurationMs() {
 	return lastDrawMs;
 }
+
+uint8_t lastFlipFoldedTubes() {
+	return lastFlipFolded;
+}
+
+uint16_t lastFlipFrameCount() {
+	return lastFlipFrames;
+}
+
 
 void interrupt() {
 	if (running) {

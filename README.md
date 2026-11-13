@@ -27,9 +27,9 @@ two GPUs' load and memory (bottom). Rendered by the app, they look like this:*
   picture tube).
 * Compressed pictures: lossless **QOI** for dashboards (1 to 3 KB a tube instead of 64.8 KB) and
   **JPEG** for photos and camera images.
-* **A whole screen in one request** (`POST /panel/batch`), drawn in about a fifth of a second, with
-  **transitions played by the clock itself**: wipes and cascades, smooth and exactly timed, whatever
-  the Wi-Fi is doing.
+* **A whole screen in one request** (`POST /panel/batch`), drawn in about a seventh of a second, with
+  **transitions played by the clock itself**: wipes, cascades and split-flap **flips**, smooth and
+  exactly timed, whatever the Wi-Fi is doing.
 * **Animated GIFs played by the clock**, on up to two tubes, with no Wi-Fi traffic while they play.
 * Pictures are never written to flash, so updating them every few seconds causes no wear.
 * The clock reports over MQTT which tubes are waiting for a picture (`panels_needed`), so Home Assistant
