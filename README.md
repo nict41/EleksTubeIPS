@@ -88,8 +88,9 @@ two GPUs' load and memory (bottom). Rendered by the app, they look like this:*
    or Edge on a computer, pick your clock and choose **Full install**.
    * IPSTube: hold the clock's power button while plugging in the USB cable.
    * An IPSTube used only through Home Assistant can take **IPSTube, Home Assistant only**: the same
-     firmware without the clock's own weather, which leaves more memory free for pictures and GIFs.
-     You can switch between the two later with a normal Wi-Fi update.
+     firmware without the clock's own weather (Home Assistant has the weather), which leaves more
+     memory free for pictures and GIFs. Its web UI and its Home Assistant entities leave the weather
+     settings out too. You can switch between the two later with a normal Wi-Fi update.
    * Back up the original firmware first if you might want it back (see
      [Installation](https://github.com/judge2005/EleksTubeIPS/wiki/Installation) in the original
      project's wiki).

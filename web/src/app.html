@@ -773,6 +773,36 @@
 			$("#invalid_field_popup").enhanceWithin().popup();
 		});
 
+		// The Home Assistant-only build has no weather ("weather": false in GET /panel): hide its
+		// controls, marked weather-only. A radio button's enhanced wrapper goes with it, and its group
+		// is refreshed so the rounded corners land on the buttons left.
+		var noWeather = false;
+
+		function hideWeather() {
+			if (!noWeather) {
+				return;
+			}
+			$('.weather-only').each(function () {
+				var el = $(this);
+				var wrapper = el.closest('.ui-radio');
+				(wrapper.length ? wrapper : el).hide();
+				el.closest('[data-role="controlgroup"]').each(function () {
+					var group = $(this);
+					if (group.data('mobile-controlgroup')) {
+						group.controlgroup('refresh');
+					}
+				});
+			});
+		}
+
+		$.ajax({ url: '/panel', type: 'GET', cache: false, success: function (data) {
+			noWeather = data && data.weather === false;
+			hideWeather();
+		}});
+		$(document).on('pagecreate pageshow', function () {
+			setTimeout(hideWeather, 0);	// After jQuery Mobile has enhanced the page
+		});
+
 	</script>
 	<!-- From the firmware, see theme.css. theme.js is inlined. -->
 	<script src="/theme.js"></script>

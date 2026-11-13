@@ -530,6 +530,25 @@ void onMatrixHueChanged(ConfigItem<int> &item) {
 
 unsigned long lastDisplayChange = 0;
 
+#ifdef HA_ONLY
+// This build has no weather, so a display or number of digits that would show it (saved by an earlier
+// build, its default, or set over MQTT) falls back to one that doesn't, and the web UI hears of it
+void haOnlyNoWeather() {
+	IntConfigItem &display = IPSClock::getTimeOrDate();
+	if (display.value == IPSClock::WEATHER) {
+		display.value = IPSClock::TIME;
+		broadcastUpdate(display);
+		display.notify();
+	}
+	ByteConfigItem &digits = IPSClock::getFourDigitDisplay();
+	if (digits.value == IPSClock::FOUR_WITH_WEATHER) {
+		digits.value = IPSClock::SIX;
+		broadcastUpdate(digits);
+		digits.notify();
+	}
+}
+#endif
+
 void onDisplayChanged(ConfigItem<int> &item) {
 	lastDisplayChange = millis();	// However it changed, show it for a whole cycle
 	tfts->invalidateAllDigits();
@@ -549,8 +568,10 @@ void cycleDisplays() {
 	IntConfigItem &display = IPSClock::getTimeOrDate();
 	if (display.value == IPSClock::TIME) {
 		display.value = IPSClock::DATE;
+#ifndef HA_ONLY
 	} else if (display.value == IPSClock::DATE && WeatherService::getWeatherToken().value.length() > 0) {
 		display.value = IPSClock::WEATHER;
+#endif
 	} else {
 		display.value = IPSClock::TIME;	// After the weather, or from the slide show
 	}
@@ -798,6 +819,9 @@ void updateDisplays() {
 		}
 		weather->checkIconPack();
 		ipsClock->checkIconPack();
+#ifdef HA_ONLY
+		haOnlyNoWeather();
+#endif
 
 		switch (IPSClock::getTimeOrDate().value) {
 			case IPSClock::WEATHER:
@@ -1057,7 +1081,9 @@ IRAMPtrArray<const char*> items {
 	WSMenuHandler::panelsMenu,
 	WSMenuHandler::matrixMenu,
 	WSMenuHandler::ledsMenu,
+#ifndef HA_ONLY	// Home Assistant shows the weather, the clock doesn't fetch it
 	WSMenuHandler::weatherMenu,
+#endif
 	WSMenuHandler::facesMenu,
 	WSMenuHandler::networkMenu,
 	WSMenuHandler::mqttMenu,
@@ -1070,8 +1096,10 @@ WSMenuHandler wsMenuHandler(items);
 WSConfigHandler wsClockHandler(rootConfig, "clock", clockCallback);
 WSConfigHandler wsLEDHandler(rootConfig, "leds");
 WSConfigHandler wsFacesHandler(rootConfig, "faces", clockFacesCallback);
+#ifndef HA_ONLY
 const char *weatherExcludes[] = { "weather_token", 0 };	// See weatherCallback()
 WSConfigHandler wsWeatherHandler(rootConfig, "weather", weatherCallback, weatherExcludes);
+#endif
 WSConfigHandler wsMatrixHandler(rootConfig, "matrix");
 const char *mqttExcludes[] = { "mqtt_password", 0 };	// See mqttCallback()
 WSConfigHandler wsMqttHandler(rootConfig, "mqtt", mqttCallback, mqttExcludes);
@@ -1087,7 +1115,11 @@ IRAMPtrArray<WSHandler*> wsHandlers {
 	&wsMqttHandler,
 	&wsInfoHandler,
 	&wsNetworkHandler,
+#ifndef HA_ONLY
 	&wsWeatherHandler,
+#else
+	NULL,	// The weather page's number: no weather in this build
+#endif
 	&wsMatrixHandler,
 	NULL
 };
@@ -2263,6 +2295,9 @@ void panelHandler(AsyncWebServerRequest *request) {
 		+ String((unsigned long)PanelDraw::bufferFree())
 		+ ",\"transitions\":[\"wipe\",\"cascade\"],\"drawing\":" + String(PanelDraw::busy() ? "true" : "false")
 		+ ",\"last_draw_ms\":" + String((unsigned long)PanelDraw::lastDurationMs())
+#ifdef HA_ONLY
+		+ ",\"weather\":false"	// For the web UI, which hides the weather settings then
+#endif
 		+ ",\"gif\":true,\"gif_free\":"
 		+ String((unsigned long)GifPlayer::freeBytes())
 		+ ",\"firmware\":\"" FIRMWARE_VERSION "\"}";
@@ -2545,7 +2580,9 @@ public:
 SETTINGS_PAGE(clock)
 SETTINGS_PAGE(leds)
 SETTINGS_PAGE(faces)
+#ifndef HA_ONLY
 SETTINGS_PAGE(weather)
+#endif
 SETTINGS_PAGE(matrix)
 SETTINGS_PAGE(mqtt)
 SETTINGS_PAGE(network)
@@ -2565,7 +2602,9 @@ static const SettingsPage settingsPages[] = {
 	{ "/clock.html", clockPageStart, clockPageEnd },
 	{ "/leds.html", ledsPageStart, ledsPageEnd },
 	{ "/faces.html", facesPageStart, facesPageEnd },
+#ifndef HA_ONLY
 	{ "/weather.html", weatherPageStart, weatherPageEnd },
+#endif
 	{ "/matrix.html", matrixPageStart, matrixPageEnd },
 	{ "/mqtt.html", mqttPageStart, mqttPageEnd },
 	{ "/network.html", networkPageStart, networkPageEnd },
@@ -2706,6 +2745,12 @@ void configureWebServer() {
 		request->send(response);
 	});
 
+#ifdef HA_ONLY
+	// The file system is shared with the standard build, so the weather page is in it: not here
+	server->on("/weather.html", HTTP_GET, [](AsyncWebServerRequest *request) {
+		request->send(404, "text/plain", "this build has no weather, Home Assistant shows it");
+	});
+#endif
 	server->serveStatic("/", LittleFS, "/");
 	server->on("/", HTTP_GET, mainHandler).setFilter(ON_STA_FILTER);
 	server->on("/custom", HTTP_GET | HTTP_POST, customHandler);
