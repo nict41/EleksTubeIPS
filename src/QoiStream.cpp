@@ -333,10 +333,10 @@ size_t QoiStream::feedUntil(const uint8_t *data, size_t len, uint32_t limit, Pix
 					emitRun(limit, emit, ctx);
 				}
 			}
-			if (runLeft > 0 || pixelsDone >= limit) {
-				continue;	// The checks at the top: a run to finish, or paused
+			if (runLeft > 0 || pixelsDone >= limit || offset >= len) {
+				continue;	// The checks at the top: a run to finish, paused, or all the bytes used
 			}
-			// Otherwise fewer than 5 bytes are left: the slow way, for the last few
+			// Otherwise 1 to 4 bytes are left: the slow way, for the last few
 		}
 
 		if (opNeed == 0) {
