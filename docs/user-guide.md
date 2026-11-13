@@ -89,7 +89,9 @@ There's no Save button. A change takes effect on the clock straight away, and th
 
 <img src="ui/panels.webp" alt="The Panels page" width="400">
 
-Explains panels and shows their live status: which tubes are panel tubes, and which are still waiting for a picture (after a restart, the screen saver or a status message, until Home Assistant sends it again). **Refresh** checks again. Panels are turned on with **Display** set to **Panels**, or **Number of Digits** set to **Four + Panel**, on the [Clock](#clock) page. See [Showing pictures from Home Assistant (panels)](#showing-pictures-from-home-assistant-panels) for sending pictures.
+Explains panels and shows their live status: which tubes are panel tubes, and which are still waiting for a picture (after a restart, the screen saver or a status message, until Home Assistant sends it again). Below that: the firmware version, the picture formats and transitions it takes, how big a screen it can hold right now (less while GIFs play) and how long the last screen took to draw. **Refresh** checks again.
+
+**Test pattern** draws a pattern on every panel tube, made by the clock itself, so you can check the tubes and try the transitions without Home Assistant: **Show** (straight away), **Wipe**, **Wipe from the centre** or **Cascade**. Each tube's pattern is different, with blocks at the bottom counting its number, and every press swaps between two looks so the transition shows. It stays for three seconds, then the tubes ask Home Assistant for their pictures again. Panels are turned on with **Display** set to **Panels**, or **Number of Digits** set to **Four + Panel**, on the [Clock](#clock) page. See [Showing pictures from Home Assistant (panels)](#showing-pictures-from-home-assistant-panels) for sending pictures.
 
 ## LEDs
 
@@ -312,7 +314,7 @@ POST http://<clock>/panel/batch?transition=cascade&gap=90&order=2,3,1,4,0,5
 
 The body is a run of records, each a 14-byte header and then the picture. The header's numbers are little-endian: `tube` (1 byte), `format` (1 byte: 0 for raw RGB565, 1 for QOI, 2 for JPEG), `x`, `y`, `w`, `h` (2 bytes each) and the picture's length in bytes (4 bytes). Each picture is exactly what `POST /panel` takes for that rectangle in that format.
 
-The clock keeps the whole batch in memory as it arrives and draws it once it's all there, on a task of its own, so the reply comes as soon as the body is in. (Decoding on the web server's task while the body arrives would lose packets, which stalls the upload for half a second or more.) `batch_buffer` in `GET /panel` is the largest batch it can hold right now, about 30 to 48 KB, and less while GIFs play. A bigger batch is answered `413`. Then send it in smaller pieces, or the pictures one by one; a batch of at most 4 KB is still taken, drawn as it arrives, but without JPEG or a transition.
+The clock keeps the whole batch in memory as it arrives and draws it once it's all there, on a task of its own, so the reply comes as soon as the body is in. (Decoding on the web server's task while the body arrives would lose packets, which stalls the upload for half a second or more.) `batch_buffer` in `GET /panel` is the largest batch it can hold right now: 64.8 KB, in the display buffer the clock faces use, which is idle while the tubes show panels, so a batch takes no extra memory. While GIFs play they use that buffer, and a batch then comes from the heap: at most 24 KB, and only while enough heap stays free. A bigger batch is answered `413`. Then send it in smaller pieces, or the pictures one by one; a batch of at most 4 KB is still taken, drawn as it arrives, but without JPEG or a transition.
 
 Transitions are played by the clock at the displays' own speed, with exact timing:
 
@@ -320,14 +322,16 @@ Transitions are played by the clock at the displays' own speed, with exact timin
 * `transition=cascade`: the tubes are drawn one after another in `order`, `gap` ms apart (90 if left out).
 * `order` is the tubes in the order they change, for example `5,4,3,2,1,0` from the right or `2,3,1,4,0,5` from the centre. Without it, tubes 0 to 5.
 
-Only whole-tube records of the tubes in `order` take part in a transition; anything else in the batch is drawn first. While a batch is being drawn, `GET /panel` says `"drawing":true`, and another `POST /panel` or `/panel/batch` is answered `503` with an `X-Retry-After-Ms` header saying when to try again. Add `interrupt=1` to a batch that replaces the one being drawn, for example the next screen after a button press: the clock stops the old one at once, marks the tubes it didn't finish as `needed`, and answers `503` with a short `X-Retry-After-Ms`. `last_draw_ms` is how long the last batch took to draw.
+Only whole-tube records of the tubes in `order` take part in a transition; anything else in the batch is drawn first. A JPEG can't be drawn a strip at a time, so in a wipe a JPEG tube appears whole when its turn comes.
+
+`POST http://<clock>/panel/test` takes the same `transition`, `duration`, `gap` and `order` and draws the test pattern of the [Panels page](#panels-page) instead of pictures, for trying transitions. While a batch is being drawn, `GET /panel` says `"drawing":true`, and another `POST /panel` or `/panel/batch` is answered `503` with an `X-Retry-After-Ms` header saying when to try again. Add `interrupt=1` to a batch that replaces the one being drawn, for example the next screen after a button press: the clock stops the old one at once, marks the tubes it didn't finish as `needed`, and answers `503` with a short `X-Retry-After-Ms`. `last_draw_ms` is how long the last batch took to draw.
 
 `GET http://<clock>/panel` replies which tubes are panel tubes and which of them still need a picture:
 
 ```json
 {"tubes":[0,1,2,3,4,5],"needed":[2],"playing":[],"width":135,"height":240,
- "formats":["rgb565","qoi","jpeg"],"batch":true,"batch_buffer":37516,"transitions":["wipe","cascade"],
- "drawing":false,"last_draw_ms":212,"gif":true,"gif_free":1820000,"firmware":"2.5.0"}
+ "formats":["rgb565","qoi","jpeg"],"batch":true,"batch_buffer":64802,"transitions":["wipe","cascade"],
+ "drawing":false,"last_draw_ms":212,"gif":true,"gif_free":1820000,"firmware":"2.5.1"}
 ```
 
 `formats`, `batch`, `transitions` and `gif` say what this firmware accepts (older firmware leaves them out), `playing` lists the tubes playing a GIF, and `gif_free` is the space left for GIFs.
@@ -339,11 +343,14 @@ For example, with [tools/send_panel.py](../tools/send_panel.py), which needs Pyt
 ```
 python3 tools/send_panel.py <clock-host> picture.jpg --tube 0
 python3 tools/send_panel.py <clock-host> panorama.jpg --strip
+python3 tools/send_panel.py <clock-host> panorama.jpg --strip --transition wipe --order 2,3,1,4,0,5 --duration 700
+python3 tools/send_panel.py <clock-host> picture.jpg --tube 0 --format jpeg
 python3 tools/send_panel.py <clock-host> picture.jpg --tube 0 --user <user> --password <password>
+python3 tools/send_panel.py <clock-host> --test-pattern wipe
 python3 tools/send_panel.py <clock-host> --status
 ```
 
-`--tube N` resizes and crops the image to fill the tube, and sends it there. `--strip` crops the image to fill all six tubes side by side (810x240), splits it into six and sends them to tubes 0 to 5 one after another. `--status` prints the `GET /panel` reply.
+`--tube N` resizes and crops the image to fill the tube, and sends it there. `--strip` crops the image to fill all six tubes side by side (810x240) and splits it into six: on a clock that takes batches they go in one request, and `--transition`, `--duration`, `--gap` and `--order` have the clock play a transition with them; otherwise they go to tubes 0 to 5 one after another. `--format` is `raw`, `qoi` or `jpeg`; by default QOI when the clock takes it, and JPEG for a strip too big to hold as QOI (photos). `--test-pattern` draws the clock's own test pattern. `--status` prints the `GET /panel` reply.
 
 ## Animated GIFs
 

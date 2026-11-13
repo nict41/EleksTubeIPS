@@ -27,6 +27,25 @@ jobs:
 
       - run: python3 tools/check_release.py
 
+  native-tests:
+    name: Decoder tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      # The QOI decoder and the batch reader, built with g++ and the address and undefined-behaviour
+      # sanitizers, against images Pillow makes
+      - run: pip install pillow==13.0.0 requests && python3 tools/native_tests.py
+
+      - name: Tool tests
+        run: python3 -m unittest tools/test_send_panel.py -v
+
   build:
     needs: sources
     uses: ./.github/workflows/build.yml

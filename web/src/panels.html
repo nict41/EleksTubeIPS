@@ -10,7 +10,8 @@
             <div data-role="content">
                 <form action="/set_panels" method="POST" id="panels_form">
 					<p>With panels, each tube shows a full-screen picture sent to the clock from Home Assistant,
-					instead of a clock face. Each picture is 135x240 pixels, sent as raw RGB565 over HTTP.</p>
+					instead of a clock face. Each picture is 135x240 pixels, sent over HTTP as raw pixels, QOI or JPEG, one
+					tube at a time or a whole screen at once, and the clock can play a transition as it changes.</p>
 					<p>Turn them on with <b>Display</b> set to <b>Panels</b> on the Clock page, so all six tubes
 					show pictures, or with <b>Number of Digits</b> set to <b>Four + Panel</b>, so only the last
 					tube does and the other four show the time as usual.</p>
@@ -20,8 +21,20 @@
 						<ul id="panel_status" data-role="listview" data-inset="true">
 							<li>Waiting for the clock...</li>
 						</ul>
+						<ul id="panel_info" data-role="listview" data-inset="true"></ul>
 						<input type="button" value="Refresh" data-inline="true" data-mini="true" onclick="refreshPanels();"/>
 						<p class="hint">Tubes are numbered 1 to 6 from left to right here; the API below uses 0 to 5.</p>
+					</fieldset>
+					<div class="clearFloats"></div>
+					<fieldset data-role="controlgroup" data-mini="true">
+						<legend>Test pattern</legend>
+						<p>Draws a test pattern on every panel tube, made by the clock itself, to check the tubes and try
+						the transitions. It stays for three seconds, then the tubes ask Home Assistant for their pictures again.</p>
+						<input type="button" value="Show" data-inline="true" data-mini="true" onclick="panelTest('none');"/>
+						<input type="button" value="Wipe" data-inline="true" data-mini="true" onclick="panelTest('wipe');"/>
+						<input type="button" value="Wipe from the centre" data-inline="true" data-mini="true" onclick="panelTest('wipe', '2,3,1,4,0,5');"/>
+						<input type="button" value="Cascade" data-inline="true" data-mini="true" onclick="panelTest('cascade');"/>
+						<p class="hint" id="panel_test_result"></p>
 					</fieldset>
 					<div class="clearFloats"></div>
 					<fieldset data-role="controlgroup" data-mini="true">
@@ -31,8 +44,11 @@
 						editor, and pushes them to the tubes. The clock's button steps to its next screen while panels
 						are showing.</p>
 						<p>To send a picture to a tube by hand, the body is the raw pixels, RGB565 big-endian, row by row,
-						exactly <code>135*240*2 = 64800</code> bytes for a whole tube:</p>
-						<p><code>curl --data-binary @tube.rgb565 "http://&lt;clock&gt;/panel?tube=0"</code></p>
+						exactly <code>135*240*2 = 64800</code> bytes for a whole tube (or add <code>&amp;format=qoi</code> or
+						<code>&amp;format=jpeg</code> for a compressed picture):</p>
+						<p><code>curl -H 'Content-Type: application/octet-stream' --data-binary @tube.rgb565 "http://&lt;clock&gt;/panel?tube=0"</code></p>
+						<p class="hint">A whole screen in one request, with a transition, goes to <code>POST /panel/batch</code>, see the
+						<a target="_blank" rel="noopener noreferrer" href="https://github.com/nict41/HA-Tubes/blob/main/docs/user-guide.md#showing-pictures-from-home-assistant-panels">user guide</a>.</p>
 						<p class="hint"><code>GET /panel</code> replies which tubes are panel tubes and which still need a
 						picture, as the status above shows.</p>
 					</fieldset>
@@ -78,6 +94,47 @@
 					list.append('<li>Picture size: ' + data.width + 'x' + data.height + ' pixels</li>');
 				}
 				list.listview('refresh');
+
+				var info = $('#panel_info');
+				info.empty();
+				if (data.firmware) {
+					info.append('<li>Firmware: ' + data.firmware + '</li>');
+				}
+				if (data.formats) {
+					info.append('<li>Picture formats: ' + data.formats.join(', ') + '</li>');
+				}
+				if (data.transitions) {
+					info.append('<li>Transitions: ' + data.transitions.join(', ') + '</li>');
+				}
+				if (data.batch_buffer !== undefined) {
+					info.append('<li>' + (data.drawing ? 'Drawing a screen now' : 'Room for a screen of up to '
+						+ Math.round(data.batch_buffer / 1024) + ' KB') + '</li>');
+				}
+				if (data.last_draw_ms) {
+					info.append('<li>Last screen drawn in ' + data.last_draw_ms + ' ms</li>');
+				}
+				var playing = data.playing || [];
+				if (playing.length) {
+					info.append('<li>Playing GIFs on tube ' + playing.map(function (t) { return t + 1; }).join(' and ') + '</li>');
+				}
+				info.listview('refresh');
+			}
+
+			function panelTest(transition, order) {
+				var url = '/panel/test?transition=' + transition + (order ? '&order=' + order : '');
+				var result = $('#panel_test_result');
+				result.text('Drawing...');
+				$.ajax({
+					url: url,
+					type: 'POST',
+					success: function () {
+						result.text('');
+						setTimeout(refreshPanels, 1500);
+					},
+					error: function (xhr) {
+						result.text(xhr.responseText || 'Could not reach the clock');
+					}
+				});
 			}
 
 			// Once now (the script runs as the page loads), and again each time the page is shown
