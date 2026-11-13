@@ -945,6 +945,9 @@ void clockTaskFn(void *pArg) {
 		}
 
 		mqttBroker->checkConnection();
+#ifdef HA_ONLY
+		ws->cleanupClients(1);	// One web UI browser at a time: each keeps a queue of up to 32 messages
+#endif
 	}
 }
 
@@ -1544,6 +1547,7 @@ void customHandler(AsyncWebServerRequest *request) {
 #define PANEL_ROWS_PER_CALL 4
 #define PANEL_JPEG_MAX (48 * 1024)			// Largest JPEG body accepted
 #define PANEL_JPEG_HEADROOM (16 * 1024)		// Heap left over after taking the body: decoder + everything else
+static_assert(PANEL_JPEG_MAX <= sizeof(StaticSprite::output_buffer), "A JPEG must fit the display buffer");
 
 // The /panel upload in progress. ESPAsyncWebServer calls the body handler as the body arrives and the
 // request handler only once all of it has, so the body handler checks the request and draws, and the
@@ -1567,6 +1571,7 @@ struct PanelUpload {
 	QoiStream qoi;
 	uint8_t *jpeg = NULL;
 	size_t jpegLen = 0;
+	bool jpegInDisplayBuffer = false;	// jpeg points into the display buffer, holding memMutex
 
 	AsyncWebServerRequest *resultRequest = NULL;	// The request the reply below is for
 	int resultCode = 0;
@@ -1576,7 +1581,12 @@ static PanelUpload panelUpload;
 
 // The JPEG body is only held for the upload it belongs to
 static void panelUploadFreeJpeg() {
-	free(panelUpload.jpeg);
+	if (panelUpload.jpegInDisplayBuffer) {
+		panelUpload.jpegInDisplayBuffer = false;
+		xSemaphoreGive(memMutex);
+	} else {
+		free(panelUpload.jpeg);
+	}
 	panelUpload.jpeg = NULL;
 	panelUpload.jpegLen = 0;
 }
@@ -1662,9 +1672,20 @@ static bool panelUploadStart(AsyncWebServerRequest *request, size_t total) {
 	}
 
 	if (format == PanelUpload::JPEG) {
-		// The decoder needs all of it; leave room for the decoder and everything else
-		if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < total + PANEL_JPEG_HEADROOM
-				|| (panelUpload.jpeg = (uint8_t*)malloc(total)) == NULL) {
+		// The decoder needs all of it. The display buffer is idle in panel mode unless GIFs live in
+		// it, so it holds the JPEG then (no heap needed); otherwise it comes from the heap, leaving room
+		// for the decoder and everything else.
+		if (!GifPlayer::active() && xSemaphoreTake(memMutex, 0) == pdTRUE) {
+			if (GifPlayer::active()) {	// One started meanwhile
+				xSemaphoreGive(memMutex);
+			} else {
+				panelUpload.jpeg = StaticSprite::output_buffer;
+				panelUpload.jpegInDisplayBuffer = true;
+			}
+		}
+		if (panelUpload.jpeg == NULL
+				&& (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < total + PANEL_JPEG_HEADROOM
+					|| (panelUpload.jpeg = (uint8_t*)malloc(total)) == NULL)) {
 			panelUploadFinish(request, 503, "not enough memory for this JPEG");
 			return false;
 		}
@@ -2931,6 +2952,7 @@ IPSClock::getTimeZone().setCallback(onTimezoneChanged);
 		0
 	);
 
+#ifndef HA_ONLY	// Home Assistant shows the weather; the task's stack and its TLS memory peaks are saved
     xTaskCreatePinnedToCore(
 		weatherTaskFn, /* Function to implement the task */
 		"Weather client task", /* Name of the task */
@@ -2940,6 +2962,7 @@ IPSClock::getTimeZone().setCallback(onTimezoneChanged);
 		&weatherTask,  /* Task handle. */
 		xPortGetCoreID()
 	);
+#endif
 
     Serial.print("setup() running on core ");
     Serial.println(xPortGetCoreID());

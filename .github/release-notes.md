@@ -1,11 +1,7 @@
 # What's new #
-The first release of **HA Tubes**, based on [EleksTubeIPS](https://github.com/judge2005/EleksTubeIPS) 2.1.6 by Paul Andrews.
-
-* **Panels:** each tube can show a 135x240 picture pushed from Home Assistant (`POST /panel`), in the new **Panels** and **Four + Panel** display modes. Use the [Tube Display](https://github.com/nict41/nict41-s-HA-Apps/tree/main/tube_display) Home Assistant app to design and rotate screens; in Panels mode the clock's button shows its next screen.
-* **Updates over Wi-Fi** on the 8 MB IPSTube clocks: the Info page, `curl --data-binary @firmware.bin http://<clock>/update`, or the Home Assistant **Firmware** update entity. `?target=fs` (or picking a `littlefs*.bin` on the Info page) updates the file system image too.
-* **A new web UI look:** HA Tubes theme in light and dark, a grouped menu, and new Panels and About pages.
-
-Clocks coming from EleksTubeIPS or an earlier HA Tubes build without two app slots need one **Full install** over USB (below). Settings and Wi-Fi details are kept; uploaded faces, icons and slides go back to the built-in ones.
+* **Compressed pictures:** `POST /panel` takes `format=qoi` (lossless, decoded as it arrives) and `format=jpeg` (decoded by the ESP32's built-in decoder). A typical dashboard tube is 1 to 3 KB instead of 64.8 KB, so the six tubes change in about 0.4 s instead of 1.3 s. `GET /panel` lists the `formats` the clock accepts. The [Tube Display](https://github.com/nict41/nict41-s-HA-Apps/tree/main/tube_display) app uses them automatically.
+* **Animated GIFs played by the clock:** store GIFs on the clock (`/gif`) and play them on up to two panel tubes at their own frame rate, with no Wi-Fi traffic while they play. Their decoders use the display buffer the clock faces use, which is idle in panel mode, so they cost no extra memory. See [Animated GIFs](https://github.com/nict41/HA-Tubes/blob/main/docs/user-guide.md#animated-gifs).
+* **A Home Assistant-only build for the IPSTube clock** (`firmware-ipstube_ha-$version$.bin`): for clocks used only through Home Assistant. It leaves out the clock's own weather (Home Assistant shows the weather), which saves its memory and the memory peaks of fetching it, and allows one web UI browser at a time. Everything else is the same. Switch to it with a normal Wi-Fi update; switch back the same way.
 
 # Installation #
 The IPSTube clocks (H401/H402 and the hardware-dimming one) can now update themselves over Wi-Fi, see [Updating over Wi-Fi](https://github.com/nict41/HA-Tubes/blob/main/docs/user-guide.md#updating-over-wi-fi). The other clocks still can't, so flash them over USB. The easiest way is the [web installer]($installer$), which works in Chrome or Edge on a computer. The [installation guide](https://github.com/judge2005/EleksTubeIPS/wiki/Installation) covers connecting the clock and backing up its original firmware.
@@ -30,6 +26,7 @@ NOTE: littlefs8MB-$version$.bin, bootloader8MB.bin and partitions8MB.bin are onl
 | Si Hai | `firmware-sihai-$version$.bin` |
 | PCBWay PunkCyber | `firmware-punkcyber-$version$.bin` |
 | IPSTube (H401/H402) | `firmware-ipstube-$version$.bin` |
+| IPSTube used only through Home Assistant | `firmware-ipstube_ha-$version$.bin` |
 | IPSTube with hardware dimming | `firmware-ipstube_dim-$version$.bin` |
 
 Some clocks sold as an EleksTube IPS V2 need the V1 firmware. If every display shows the same digit after installing, install the other EleksTube version's firmware file.
