@@ -262,7 +262,7 @@ The forecast comes from [OpenWeatherMap](https://openweathermap.org/), and a fre
 
 ## Clock buttons
 
-The IPSTube has one button, power, on the back. When the screen saver is running, pressing it stops the screen saver, and does nothing else.
+The IPSTube has one button, power. When the screen saver is running, pressing it stops the screen saver, and does nothing else.
 
 **While panels are showing** (Display set to Panels), pressing the button doesn't change the display mode. Instead the clock publishes `next` on `clock/<id>/button`, and the [Tube Display](https://github.com/nict41/nict41-s-HA-Apps/tree/main/tube_display) app shows its next screen:
 

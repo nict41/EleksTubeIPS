@@ -196,8 +196,8 @@ Full app documentation: the app's **Documentation** tab, or
 
 The firmware is a [PlatformIO](https://platformio.org/) project. `pio run -e ipstube_ha` builds the
 recommended IPSTube firmware, and `pio run -e ipstube_ha -t buildfs` its file system image,
-including the web UI from `web/` (needs Node.js). Every pull request is built for all clocks in CI, and any compiler warning
-fails the build.
+including the web UI from `web/` (needs Node.js). Every pull request is built for all clocks in
+CI, and any compiler warning fails the build.
 
 ## Credits
 
