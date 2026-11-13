@@ -1,5 +1,5 @@
 {
-    "name": "IPSTube Replacement Firmware",
+    "name": "HA Tubes Firmware for IPSTube Clock",
     "version": "$version$",
     "new_install_prompt_erase": true,
     "builds": [

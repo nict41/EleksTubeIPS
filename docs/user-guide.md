@@ -15,7 +15,7 @@ How to set up and use a clock running [HA Tubes](https://github.com/nict41/HA-Tu
 
 After installing, the web installer may offer to connect the clock to your Wi-Fi network. Otherwise, if the clock can't join a network when it starts, it opens its own access point:
 
-1. The bottom of the displays takes turns showing the access point's **WiFi network** name, such as `EleksTubeB2C3`, and its **WiFi password**. If the clock tried to join a network and couldn't, it also shows why, as a **WiFi problem**.
+1. The bottom of the displays takes turns showing the access point's **WiFi network** name, such as `HATubesB2C3`, and its **WiFi password**. If the clock tried to join a network and couldn't, it also shows why, as a **WiFi problem**.
 2. Join that network from your phone or computer, using that password. A page from the clock should open by itself. If it doesn't, go to http://192.168.4.1.
 3. Choose **Configure WiFi**, choose your network from the list and enter its password. **Scan** refreshes the list. You can change the clock's hostname here too, which you'll need to if you have more than one clock. Then choose **save**.
 4. The clock joins your network and shows its IP address for a few seconds. The access point closes 30 seconds later. If the clock can't join, the displays and the **Info** page say why: **Wrong password?**, **Network not found** or **Can't connect**. The access point stays on so you can try again.
@@ -333,7 +333,7 @@ Only whole-tube records of the tubes in `order` take part in a transition; anyth
 ```json
 {"tubes":[0,1,2,3,4,5],"needed":[2],"playing":[],"width":135,"height":240,
  "formats":["rgb565","qoi","jpeg"],"batch":true,"batch_buffer":64802,"transitions":["wipe","cascade"],
- "drawing":false,"last_draw_ms":212,"gif":true,"gif_free":1820000,"firmware":"2.5.2"}
+ "drawing":false,"last_draw_ms":212,"gif":true,"gif_free":1820000,"firmware":"2.5.3"}
 ```
 
 `formats`, `batch`, `transitions` and `gif` say what this firmware accepts (older firmware leaves them out), `playing` lists the tubes playing a GIF, and `gif_free` is the space left for GIFs.

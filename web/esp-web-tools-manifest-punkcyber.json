@@ -1,5 +1,5 @@
 {
-    "name": "PCBWay RGB Glow Tube Clock Firmware",
+    "name": "HA Tubes Firmware for PCBWay RGB Glow Tube Clock",
     "version": "$version$",
     "new_install_prompt_erase": true,
     "new_install_improv_wait_time": 30,

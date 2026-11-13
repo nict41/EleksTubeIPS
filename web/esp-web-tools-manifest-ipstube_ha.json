@@ -1,5 +1,5 @@
 {
-    "name": "IPSTube Replacement Firmware (Home Assistant only)",
+    "name": "HA Tubes Firmware for IPSTube Clock (Home Assistant only)",
     "version": "$version$",
     "new_install_prompt_erase": true,
     "new_install_improv_wait_time": 30,
