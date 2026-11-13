@@ -2,6 +2,7 @@
 #include <esp_heap_caps.h>
 
 #include "PanelDraw.h"
+#include "PanelBatch.h"
 #include "GifPlayer.h"
 #include "JpegPanel.h"
 #include "OTA.h"
@@ -10,23 +11,21 @@
 
 extern TFTs *tfts;
 extern void requestMqttPublish();
+extern SemaphoreHandle_t memMutex;
 
 namespace PanelDraw {
 
-#define MAX_RECORDS 64
+#define MAX_RECORDS 48
 #define STRIP_ROWS 8			// Rows decoded and drawn at a time
 #define TUBE_SLOTS (6 + 1)		// One per tube in a transition, and one for drawing straight away
 #define MS_PER_TUBE 40			// Roughly what decoding and drawing a whole tube takes
+#define TEST_HOLD_MS 3000		// How long the test pattern stays before the tubes ask for their pictures again
 
-enum Format : uint8_t { RGB565 = 0, QOI = 1, JPEG = 2 };
-
-struct Record {
-	uint8_t tube;
-	uint8_t format;
-	int16_t x, y, w, h;
-	const uint8_t *data;
-	uint32_t len;
-};
+using PanelBatch::Record;
+using PanelBatch::RGB565;
+using PanelBatch::QOI;
+using PanelBatch::JPEG;
+using PanelBatch::PATTERN;
 
 // A record being drawn, a few rows at a time
 struct TubeJob {
@@ -45,9 +44,27 @@ struct Job {
 	Transition t;
 	Record records[MAX_RECORDS];
 	uint8_t count;
+	bool test;			// The test pattern: shown for TEST_HOLD_MS, then the tubes are marked needed
 	TubeJob tubes[TUBE_SLOTS];
 	uint8_t rows[STRIP_ROWS * TFT_WIDTH * 2];
 };
+
+/*
+ * Where a batch is held. Normally in the display buffer (StaticSprite::output_buffer, 64.8 KB), which
+ * is idle while the tubes show panels, so a batch costs no heap at all. It's guarded by memMutex, and
+ * a FreeRTOS mutex must be given back by the task that took it, so this task takes and gives it,
+ * asked by the web server's task through the command queue: RESERVE before the body arrives, RUN
+ * once it's in, or RELEASE if the upload fails. While GIFs play they use that buffer, so a batch then
+ * comes from the heap, smaller and leaving more heap free.
+ */
+static uint8_t *const displayBuffer = StaticSprite::output_buffer;
+static const size_t DISPLAY_BUFFER = sizeof(StaticSprite::output_buffer);
+enum Command : uint8_t { CMD_RESERVE, CMD_RELEASE, CMD_RUN };
+static QueueHandle_t commands = NULL;
+static SemaphoreHandle_t reserveDone = NULL;	// Given by the task once it has answered a RESERVE
+static volatile bool reserveOk = false;
+static volatile bool displayReserved = false;	// The display buffer is (being) held for a batch
+static bool holdingMutex = false;				// Only the task touches this
 
 static TaskHandle_t task = NULL;
 static Job *volatile job = NULL;			// The batch handed to the task
@@ -62,11 +79,7 @@ static uint8_t *rows = NULL;
 static uint8_t rowCount = 0;
 
 static bool isWholeTube(const Record &r) {
-	return r.x == 0 && r.y == 0 && r.w == TFT_WIDTH && r.h == TFT_HEIGHT;
-}
-
-static uint16_t le16(const uint8_t *p) {
-	return (uint16_t)(p[0] | (p[1] << 8));
+	return PanelBatch::isWholeTube(r, TFT_WIDTH, TFT_HEIGHT);
 }
 
 void wholeTubeReplaced(uint8_t tube) {
@@ -114,6 +127,37 @@ static void tubeJobBegin(TubeJob *tj, const Record *r) {
 	}
 }
 
+// The test pattern (POST /panel/test), one pixel at a time: eight colour bars, a grey ramp and, at the
+// bottom, one block per tube number, so each tube and the order they're drawn in can be told apart.
+// Two looks, swapped on every test, so a transition between them shows.
+static uint8_t testLook = 0;
+
+static uint16_t patternPixel(uint8_t tube, uint8_t look, int16_t x, int16_t y) {
+	static const uint16_t bars[8] = { 0xFFFF, 0xFFE0, 0x07FF, 0x07E0, 0xF81F, 0xF800, 0x001F, 0x0000 };
+	if (x < 3 || y < 3 || x >= TFT_WIDTH - 3 || y >= TFT_HEIGHT - 3) {
+		return look ? 0xFD20 : 0xFFFF;					// Border: orange or white
+	}
+	if (y < 150) {
+		uint8_t bar = (uint8_t)((x * 8 / TFT_WIDTH + tube + look * 4) % 8);
+		return bars[bar];
+	}
+	if (y < 190) {
+		uint8_t v = (uint8_t)(x * 255 / (TFT_WIDTH - 1));
+		if (look) {
+			v = 255 - v;
+		}
+		return (uint16_t)(((v & 0xF8) << 8) | ((v & 0xFC) << 3) | (v >> 3));	// Grey ramp
+	}
+	// Tube number: tube + 1 blocks of 14 px with 4 px gaps, centred
+	int16_t blocks = tube + 1;
+	int16_t width = blocks * 18 - 4;
+	int16_t left = (TFT_WIDTH - width) / 2;
+	if (y >= 205 && y < 225 && x >= left && x < left + width && (x - left) % 18 < 14) {
+		return look ? 0x07E0 : 0xFFE0;					// Green or yellow blocks
+	}
+	return 0x0000;
+}
+
 // Draws the record down to at least row `target` (all of it for a JPEG)
 static void advance(TubeJob *tj, int16_t target) {
 	const Record *r = tj->rec;
@@ -128,6 +172,24 @@ static void advance(TubeJob *tj, int16_t target) {
 		jpegDrawPanel(r->data, r->len, r->tube, r->x, r->y, r->w, r->h);	// A bad one just isn't drawn
 		tj->rows = r->h;
 		tj->done = true;
+		return;
+	}
+
+	if (r->format == PATTERN) {
+		while (tj->rows < target) {
+			int16_t n = target - tj->rows < STRIP_ROWS ? target - tj->rows : STRIP_ROWS;
+			uint8_t *out = rows;
+			for (int16_t yy = 0; yy < n; yy++) {
+				for (int16_t xx = 0; xx < TFT_WIDTH; xx++) {
+					uint16_t c = patternPixel(r->tube, (uint8_t)r->len, xx, (int16_t)(tj->rows + yy));
+					*out++ = (uint8_t)(c >> 8);
+					*out++ = (uint8_t)(c & 0xFF);
+				}
+			}
+			tfts->drawPanelRows(r->tube, 0, tj->rows, TFT_WIDTH, n, rows);
+			tj->rows += n;
+		}
+		tj->done = tj->rows >= r->h;
 		return;
 	}
 
@@ -203,7 +265,9 @@ static void runJob(Job *j) {
 		}
 		tubeJobBegin(now, &j->records[i]);
 		if (drawNow(now) && isWholeTube(j->records[i])) {
-			wholeTubeReplaced(j->records[i].tube);
+			if (!j->test) {
+				wholeTubeReplaced(j->records[i].tube);
+			}
 			drawn[i] = true;
 			publish = true;
 		}
@@ -220,7 +284,9 @@ static void runJob(Job *j) {
 				vTaskDelay(1);
 			}
 			if (!aborted() && drawNow(ordered[k])) {
-				wholeTubeReplaced(ordered[k]->rec->tube);
+				if (!j->test) {
+					wholeTubeReplaced(ordered[k]->rec->tube);
+				}
 				publish = true;
 			}
 		}
@@ -253,7 +319,7 @@ static void runJob(Job *j) {
 				uint32_t target = (elapsed - start) * TFT_HEIGHT / each;
 				target = (target + STRIP_ROWS - 1) / STRIP_ROWS * STRIP_ROWS;	// Whole strips
 				advance(tj, (int16_t)(target > TFT_HEIGHT ? TFT_HEIGHT : target));
-				if (tj->done) {
+				if (tj->done && !j->test) {
 					wholeTubeReplaced(tj->rec->tube);
 					publish = true;
 				}
@@ -262,6 +328,21 @@ static void runJob(Job *j) {
 				vTaskDelay(1);
 			}
 		}
+	}
+
+	if (j->test) {
+		// Leave the pattern up for a moment, then ask for the real pictures back
+		uint32_t shown = millis();
+		while (millis() - shown < TEST_HOLD_MS && !aborted()) {
+			vTaskDelay(pdMS_TO_TICKS(20));
+		}
+		for (uint8_t i = 0; i < j->count; i++) {
+			if (tfts->isPanelTube(j->records[i].tube)) {
+				tfts->setPanelNeeded(j->records[i].tube);
+			}
+		}
+		requestMqttPublish();
+		return;
 	}
 
 	if (aborted()) {
@@ -283,9 +364,39 @@ static void runJob(Job *j) {
 	}
 }
 
+static void releaseDisplayBuffer() {
+	if (holdingMutex) {
+		holdingMutex = false;
+		xSemaphoreGive(memMutex);
+	}
+	displayReserved = false;
+}
+
 static void drawTask(void *) {
 	for (;;) {
-		ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+		uint8_t cmd;
+		if (xQueueReceive(commands, &cmd, portMAX_DELAY) != pdTRUE) {
+			continue;
+		}
+		if (cmd == CMD_RESERVE) {
+			bool ok = false;
+			if (!holdingMutex && !GifPlayer::active() && xSemaphoreTake(memMutex, 0) == pdTRUE) {
+				if (GifPlayer::active()) {	// One started meanwhile
+					xSemaphoreGive(memMutex);
+				} else {
+					holdingMutex = true;
+					ok = true;
+				}
+			}
+			reserveOk = ok;
+			xSemaphoreGive(reserveDone);
+			continue;
+		}
+		if (cmd == CMD_RELEASE) {
+			releaseDisplayBuffer();
+			continue;
+		}
+
 		Job *j = job;
 		if (j == NULL) {
 			continue;
@@ -295,7 +406,11 @@ static void drawTask(void *) {
 		runJob(j);
 		rows = NULL;
 		lastDrawMs = millis() - t0;
-		free(j->buf);
+		if (j->buf == displayBuffer) {
+			releaseDisplayBuffer();
+		} else {
+			free(j->buf);
+		}
 		free(j);
 		job = NULL;
 		stopRequested = false;
@@ -305,6 +420,8 @@ static void drawTask(void *) {
 
 void begin() {
 	if (task == NULL) {
+		commands = xQueueCreate(4, sizeof(uint8_t));
+		reserveDone = xSemaphoreCreateBinary();
 		// Core 1 like the clock and the GIF player, above them (the clock's loop never sleeps, so at
 		// its priority drawing would get half the core at best). It sleeps between strips of a
 		// transition and after each tube, so they still get their turn.
@@ -312,10 +429,8 @@ void begin() {
 	}
 }
 
-size_t bufferFree() {
-	if (running) {
-		return 0;
-	}
+// The largest batch the heap can hold now, leaving HEAP_HEADROOM (and the job) free
+static size_t heapFree() {
 	size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
 	size_t reserve = HEAP_HEADROOM + sizeof(Job);
 	if (largest <= reserve) {
@@ -325,15 +440,47 @@ size_t bufferFree() {
 	return free > MAX_BUFFER ? MAX_BUFFER : free;
 }
 
+size_t bufferFree() {
+	if (running || displayReserved || task == NULL) {
+		return 0;
+	}
+	if (!GifPlayer::active() && xSemaphoreGetMutexHolder(memMutex) == NULL) {
+		return DISPLAY_BUFFER;
+	}
+	return heapFree();
+}
+
 uint8_t *takeBuffer(size_t len) {
-	if (len == 0 || len > bufferFree()) {
+	if (len == 0 || running || displayReserved || task == NULL) {
+		return NULL;
+	}
+	if (len <= DISPLAY_BUFFER && !GifPlayer::active()) {
+		xSemaphoreTake(reserveDone, 0);	// Clear an answer that came too late last time
+		uint8_t cmd = CMD_RESERVE;
+		displayReserved = true;
+		if (xQueueSend(commands, &cmd, 0) == pdTRUE) {
+			if (xSemaphoreTake(reserveDone, pdMS_TO_TICKS(50)) == pdTRUE && reserveOk) {
+				return displayBuffer;
+			}
+			cmd = CMD_RELEASE;	// No answer in time, or no: make sure it isn't held for nothing
+			xQueueSend(commands, &cmd, 0);
+		} else {
+			displayReserved = false;
+		}
+	}
+	if (len > heapFree()) {
 		return NULL;
 	}
 	return (uint8_t*)malloc(len);
 }
 
 void freeBuffer(uint8_t *buf) {
-	free(buf);
+	if (buf == displayBuffer) {
+		uint8_t cmd = CMD_RELEASE;
+		xQueueSend(commands, &cmd, portMAX_DELAY);
+	} else {
+		free(buf);
+	}
 }
 
 const char *start(uint8_t *buf, size_t len, const Transition &t, int *code) {
@@ -349,55 +496,12 @@ const char *start(uint8_t *buf, size_t len, const Transition &t, int *code) {
 	}
 	memset(j, 0, sizeof(Job));
 
-	const char *err = NULL;
-	size_t off = 0;
-	while (off < len && err == NULL) {
-		if (len - off < HEADER) {
-			err = "batch ends part way through a record";
-			break;
-		}
-		if (j->count == MAX_RECORDS) {
-			err = "a batch can have at most 64 records";
-			break;
-		}
-		const uint8_t *hd = buf + off;
-		Record &r = j->records[j->count];
-		r.tube = hd[0];
-		r.format = hd[1];
-		r.x = (int16_t)le16(hd + 2);
-		r.y = (int16_t)le16(hd + 4);
-		r.w = (int16_t)le16(hd + 6);
-		r.h = (int16_t)le16(hd + 8);
-		r.len = (uint32_t)hd[10] | ((uint32_t)hd[11] << 8) | ((uint32_t)hd[12] << 16) | ((uint32_t)hd[13] << 24);
-		off += HEADER;
-
-		if (r.tube >= 6) {
-			err = "batch record: tube must be 0 to 5";
-		} else if (r.w <= 0 || r.h <= 0 || r.w > TFT_WIDTH || r.h > TFT_HEIGHT
-				|| r.x < 0 || r.y < 0 || r.x > TFT_WIDTH - r.w || r.y > TFT_HEIGHT - r.h) {
-			err = "batch record: rectangle must be inside the tube";
-		} else if (r.len > len - off) {
-			err = "batch ends part way through a record";
-		} else if (r.format == RGB565 && r.len != (uint32_t)r.w * r.h * 2) {
-			err = "batch record: rgb565 length must be w*h*2";
-		} else if (r.format == QOI && r.len < 14 + 8) {
-			err = "batch record: not a QOI image";
-		} else if (r.format == JPEG && r.len < 4) {
-			err = "batch record: not a JPEG";
-		} else if (r.format > JPEG) {
-			err = "batch record: format must be 0 (rgb565), 1 (qoi) or 2 (jpeg)";
-		} else if (!tfts->isPanelTube(r.tube)) {
+	const char *err = PanelBatch::parse(buf, len, j->records, MAX_RECORDS, &j->count, TFT_WIDTH, TFT_HEIGHT);
+	for (uint8_t i = 0; err == NULL && i < j->count; i++) {
+		if (!tfts->isPanelTube(j->records[i].tube)) {
 			*code = 409;
 			err = "not a panel tube";
 		}
-		if (err == NULL) {
-			r.data = buf + off;
-			off += r.len;
-			j->count++;
-		}
-	}
-	if (err == NULL && j->count == 0) {
-		err = "a batch needs at least one record";
 	}
 	if (err != NULL) {
 		free(j);
@@ -419,7 +523,54 @@ const char *start(uint8_t *buf, size_t len, const Transition &t, int *code) {
 	running = true;
 	stopRequested = false;
 	job = j;
-	xTaskNotifyGive(task);
+	uint8_t cmd = CMD_RUN;
+	xQueueSend(commands, &cmd, portMAX_DELAY);
+	return NULL;
+}
+
+const char *startTest(const Transition &t, int *code) {
+	*code = 503;
+	if (running || displayReserved || task == NULL) {
+		return "busy drawing";
+	}
+	Job *j = (Job*)malloc(sizeof(Job));
+	if (j == NULL) {
+		return "not enough memory";
+	}
+	memset(j, 0, sizeof(Job));
+	testLook ^= 1;
+	for (uint8_t tube = 0; tube < 6; tube++) {
+		if (!tfts->isPanelTube(tube)) {
+			continue;
+		}
+		Record &r = j->records[j->count++];
+		r.tube = tube;
+		r.format = PATTERN;
+		r.w = TFT_WIDTH;
+		r.h = TFT_HEIGHT;
+		r.len = testLook;	// The look, for PATTERN
+	}
+	if (j->count == 0) {
+		free(j);
+		*code = 409;
+		return "no panel tubes: set Display to Panels on the Clock page";
+	}
+	for (uint8_t i = 0; i < j->count; i++) {
+		GifPlayer::stop(j->records[i].tube);
+	}
+	j->buf = NULL;
+	j->t = t;
+	j->test = true;
+	uint32_t transition = t.kind == WIPE ? t.durationMs
+		: t.kind == CASCADE ? (uint32_t)t.gapMs * (t.orderLen > 0 ? t.orderLen - 1 : 0) : 0;
+	uint32_t drawing = (uint32_t)j->count * MS_PER_TUBE;
+	endsAt = millis() + (transition > drawing ? transition : drawing) + TEST_HOLD_MS + 20;
+	running = true;
+	stopRequested = false;
+	job = j;
+	uint8_t cmd = CMD_RUN;
+	xQueueSend(commands, &cmd, portMAX_DELAY);
+	*code = 200;
 	return NULL;
 }
 

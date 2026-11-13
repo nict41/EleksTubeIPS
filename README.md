@@ -8,11 +8,16 @@ you. It keeps everything the original clock firmware does and adds firmware upda
 HA Tubes is based on [EleksTubeIPS](https://github.com/judge2005/EleksTubeIPS) by Paul Andrews
 (judge2005), used under the MIT licence. See [Credits](#credits).
 
+![An IPSTube clock showing a Claude usage dashboard: session and week rings, the reset time and the clock](docs/ha-tubes/clock-claude.webp)
+
+![The same clock showing two GPUs' load and memory](docs/ha-tubes/clock-gpu.webp)
+
+*A real IPSTube clock running HA Tubes, with screens from the Tube Display app: Claude usage (top) and
+two GPUs' load and memory (bottom). Rendered by the app, they look like this:*
+
 ![Claude usage screen](docs/ha-tubes/claude.png)
 ![Next train screen](docs/ha-tubes/train.png)
 ![Big clock screen](docs/ha-tubes/clock.png)
-
-*Screens rendered by the Tube Display app: a usage dashboard, the next train, and a big HH:MM clock.*
 
 ## What HA Tubes adds
 
@@ -20,24 +25,33 @@ HA Tubes is based on [EleksTubeIPS](https://github.com/judge2005/EleksTubeIPS) b
 * Each tube can show a 135×240 picture sent over the network (`POST /panel`), instead of a digit.
 * Two display modes: **Panels** (all six tubes) and **Four + Panel** (a 4-digit clock plus one
   picture tube).
-* Pictures stream straight to the screens and are never written to flash, so updating them every few
-  seconds causes no wear.
+* Compressed pictures: lossless **QOI** for dashboards (1 to 3 KB a tube instead of 64.8 KB) and
+  **JPEG** for photos and camera images.
+* **A whole screen in one request** (`POST /panel/batch`), drawn in about a fifth of a second, with
+  **transitions played by the clock itself**: wipes and cascades, smooth and exactly timed, whatever
+  the Wi-Fi is doing.
+* **Animated GIFs played by the clock**, on up to two tubes, with no Wi-Fi traffic while they play.
+* Pictures are never written to flash, so updating them every few seconds causes no wear.
 * The clock reports over MQTT which tubes are waiting for a picture (`panels_needed`), so Home Assistant
   can resend after a restart or screen-saver.
 * In Panels mode the clock's button asks Home Assistant for the next screen.
-* A **Panels** page in the clock's web UI shows the live panel status.
+* A **Panels** page in the clock's web UI shows the live panel status, and draws a test pattern with
+  any transition, to check the tubes without Home Assistant.
 
 ### Tube Display, the Home Assistant app
 * Renders screens from Home Assistant states with templates: rings, big numbers, text, icons
-  (Material Design Icons), bars, sparklines, pictures and camera images.
-* Rotates through screens with per-screen durations and refresh rates, or switches only when you press
-  the clock's button (**Cycle automatically** off).
+  (Material Design Icons), bars, sparklines, graphs of history, progress with an ETA, analogue clocks,
+  weather, scrolling tickers, pictures, camera images and GIFs.
+* Ten bundled fonts plus your own, and free designs across all six tubes as one 810×240 canvas.
+* Rotates through screens with per-screen durations, refresh rates, conditions and transitions, or
+  switches only when you press the clock's button (**Cycle automatically** off).
 * A visual **screen editor** in the Home Assistant sidebar:
-  * a live six-tube preview with real values
-  * an entity picker and colour thresholds (green/amber/red)
-  * icon autocomplete and a picture library with uploads
-  * a YAML view for anything else
-* Home Assistant entities to pick or pin a screen and to turn rotation on or off.
+  * a live six-tube preview with real values, and **Show on clock** while you edit
+  * a drag-and-drop designer for free layouts
+  * an entity picker, colour thresholds and a condition builder
+  * a gallery of ready-made screens, import and export, and a YAML view
+* Home Assistant entities and actions to show a screen, flash a message, pause, and turn rotation on
+  or off; night mode dims the clock after sunset.
 
 ![The Tube Display screen editor](docs/ha-tubes/editor.webp)
 
@@ -73,6 +87,9 @@ HA Tubes is based on [EleksTubeIPS](https://github.com/judge2005/EleksTubeIPS) b
 1. **First install, over USB.** Open the [web installer](https://nict41.github.io/HA-Tubes/) in Chrome
    or Edge on a computer, pick your clock and choose **Full install**.
    * IPSTube: hold the clock's power button while plugging in the USB cable.
+   * An IPSTube used only through Home Assistant can take **IPSTube, Home Assistant only**: the same
+     firmware without the clock's own weather, which leaves more memory free for pictures and GIFs.
+     You can switch between the two later with a normal Wi-Fi update.
    * Back up the original firmware first if you might want it back (see
      [Installation](https://github.com/judge2005/EleksTubeIPS/wiki/Installation) in the original
      project's wiki).

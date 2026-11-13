@@ -35,13 +35,15 @@ namespace PanelDraw {
 	};
 
 	static const size_t HEADER = 14;
-	static const size_t MAX_BUFFER = 48 * 1024;		// Largest batch held in memory
-	static const size_t HEAP_HEADROOM = 16 * 1024;	// Heap left over while one is held
+	// A batch is held in the display buffer (64.8 KB, no heap) unless GIFs are using it; then on
+	// the heap, at most this big and leaving this much heap free
+	static const size_t MAX_BUFFER = 24 * 1024;
+	static const size_t HEAP_HEADROOM = 24 * 1024;
 
 	void begin();	// Starts the task. Call after the displays are up.
 
-	// For the web server's task. A batch is held in memory from the heap; bufferFree() is the
-	// largest one that can be held right now (0 while one is being drawn).
+	// For the web server's task. bufferFree() is the largest batch that can be held right now (0
+	// while one is being drawn): 64800 bytes in the display buffer, less from the heap while GIFs play.
 	size_t bufferFree();
 	uint8_t *takeBuffer(size_t len);	// NULL when it can't be held now
 	void freeBuffer(uint8_t *buf);
@@ -49,6 +51,10 @@ namespace PanelDraw {
 	// Checks the records in buf and hands them to the task, which frees buf when it's done.
 	// Returns NULL, or why not (buf is then still the caller's), with the HTTP status in *code.
 	const char *start(uint8_t *buf, size_t len, const Transition &t, int *code);
+
+	// Draws a test pattern on every panel tube, made on the clock (no upload), with the transition:
+	// for trying transitions and checking the tubes without Home Assistant. NULL or why not.
+	const char *startTest(const Transition &t, int *code);
 
 	bool busy();			// A batch is being drawn
 	uint32_t msLeft();		// Roughly how long until it's done

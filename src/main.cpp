@@ -2179,6 +2179,32 @@ void panelBatchBodyHandler(AsyncWebServerRequest *request, uint8_t *data, size_t
 }
 
 /*
+ * POST /panel/test[?transition=wipe|cascade&duration=&gap=&order=]: a test pattern on every panel
+ * tube, made on the clock, played with the transition. For the Panels page.
+ */
+void panelTestHandler(AsyncWebServerRequest *request) {
+	if (OTA::otaBusy()) {
+		request->send(503, "text/plain", "a firmware update is in progress");
+		return;
+	}
+	PanelDraw::Transition transition;
+	const char *err = panelParseTransition(request, transition);
+	if (err != NULL) {
+		request->send(400, "text/plain", err);
+		return;
+	}
+	if (PanelDraw::busy()) {
+		AsyncWebServerResponse *response = request->beginResponse(503, "text/plain", "busy drawing");
+		response->addHeader("X-Retry-After-Ms", String((unsigned long)PanelDraw::msLeft()));
+		request->send(response);
+		return;
+	}
+	int code = 200;
+	err = PanelDraw::startTest(transition, &code);
+	request->send(code, "text/plain", err != NULL ? err : "ok");
+}
+
+/*
  * GET /panel replies which tubes are panel tubes and which of them need a fresh picture:
  * {"tubes":[0,1,2],"needed":[3],"width":135,"height":240}
  * POST /panel sends the reply panelBodyHandler() left, once the whole body has arrived. The web UI
@@ -2685,6 +2711,7 @@ void configureWebServer() {
 	server->on("/custom", HTTP_GET | HTTP_POST, customHandler);
 	// /panel/batch first: a handler for /panel would also take /panel/<anything>
 	server->on("/panel/batch", HTTP_POST, panelHandler, NULL, panelBatchBodyHandler);
+	server->on("/panel/test", HTTP_POST, panelTestHandler);
 	server->on("/panel", HTTP_GET | HTTP_POST, panelHandler, NULL, panelBodyHandler);
 	// The specific /gif/... routes first: a handler for /gif would also take /gif/<anything>
 	server->on("/gif/play", HTTP_POST, gifPlayHandler);

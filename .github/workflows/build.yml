@@ -75,6 +75,15 @@ jobs:
           fi
           echo "$CLOCK: $(grep -o '[0-9]* bytes free in the app partition' build.log)" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Check the static RAM left
+        env:
+          CLOCK: ${{ matrix.clock }}
+        run: |
+          # Static buffers that grow unnoticed make the link fail with "dram0_0_seg overflowed", or
+          # leave nothing for the next feature: keep at least 1 KB spare
+          python3 tools/check_ram.py ".pio/build/$CLOCK/firmware.elf" --min 1024 --top 10 | tee ram.txt
+          echo "$CLOCK: $(head -1 ram.txt)" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Keep the debug symbols
         env:
           CLOCK: ${{ matrix.clock }}

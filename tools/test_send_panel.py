@@ -68,6 +68,38 @@ class TestSendPanel(unittest.TestCase):
                 self.assertEqual(tile.getpixel((0, 0)), colors[i])
                 self.assertEqual(tile.getpixel((send_panel.TUBE_WIDTH - 1, send_panel.TUBE_HEIGHT - 1)), colors[i])
 
+    def test_encode_formats(self):
+        img = self.solid((10, 200, 30))
+        self.assertEqual(send_panel.encode(img, "raw"), send_panel.to_rgb565_be(img))
+        self.assertEqual(send_panel.encode(img, "qoi")[:4], b"qoif")
+        self.assertEqual(send_panel.encode(img, "jpeg")[:2], b"\xff\xd8")
+
+    def test_batch_body(self):
+        import struct
+        tiles = [self.solid((i * 40, 0, 0)) for i in range(6)]
+        body = send_panel.batch_body(tiles, "qoi")
+        off, tubes = 0, []
+        while off < len(body):
+            tube, fmt, x, y, w, h, n = struct.unpack_from("<BBHHHHI", body, off)
+            off += 14
+            self.assertEqual((fmt, x, y, w, h), (1, 0, 0, 135, 240))
+            self.assertEqual(body[off:off + 4], b"qoif")
+            off += n
+            tubes.append(tube)
+        self.assertEqual(off, len(body))
+        self.assertEqual(tubes, [0, 1, 2, 3, 4, 5])
+        raw = send_panel.batch_body(tiles[:2], "raw", tubes=[4, 1])
+        self.assertEqual(len(raw), 2 * (14 + 64800))
+        self.assertEqual((raw[0], raw[1]), (4, 0))
+
+    def test_transition_params(self):
+        self.assertEqual(send_panel.transition_params(None), {})
+        self.assertEqual(send_panel.transition_params("none", 500), {})
+        self.assertEqual(send_panel.transition_params("wipe", 400, None, "5,4,3,2,1,0"),
+                         {"transition": "wipe", "duration": "400", "order": "5,4,3,2,1,0"})
+        self.assertEqual(send_panel.transition_params("cascade", None, 70),
+                         {"transition": "cascade", "gap": "70"})
+
 
 if __name__ == "__main__":
     unittest.main()
