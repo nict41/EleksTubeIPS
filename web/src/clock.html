@@ -20,7 +20,7 @@
 					<label for="display_time">Time</label>
 					<input onchange="elementChange(this);setVisibility('time_container', this, ['0']);setVisibility('date_container', this, ['1']);" type="radio" name="time_or_date" id="display_date" value="1">
 					<label for="display_date">Date</label>
-					<input onchange="elementChange(this);setVisibility('time_container', this, ['0']);setVisibility('date_container', this, ['1']);" type="radio" name="time_or_date" id="display_weather" value="2">
+					<input onchange="elementChange(this);setVisibility('time_container', this, ['0']);setVisibility('date_container', this, ['1']);" type="radio" name="time_or_date" id="display_weather" value="2" class="weather-only">
 					<label for="display_weather">Weather</label>
 					<input onchange="elementChange(this);setVisibility('time_container', this, ['0']);setVisibility('date_container', this, ['1']);" type="radio" name="time_or_date" id="display_slides" value="3">
 					<label for="display_slides">Slide Show</label>
@@ -29,7 +29,7 @@
 				</fieldset>
 			</div>
 			<div class="clearFloats"></div>
-			<label for="display_cycle">Cycle Time, Date, Weather <span class="unit">(seconds each, 0 = off)</span></label>
+			<label for="display_cycle">Cycle Time, Date<span class="weather-only">, Weather</span> <span class="unit">(seconds each, 0 = off)</span></label>
 			<input onchange="elementChange(this)" type="range" data-highlight="true" name="display_cycle" id="display_cycle" min="0" max="240" value="0">
 			<div id="time_container" style="display: none;">
 				<div class="clearFloats"></div>
@@ -42,7 +42,7 @@
 						<label for="six_digits">Six</label>
 						<input onchange="elementChange(this)" type="radio" name="four_digit_display" id="four_digits" value="1">
 						<label for="four_digits">Four AM/PM</label>
-						<input onchange="elementChange(this)" type="radio" name="four_digit_display" id="four_digits_plus_weather" value="2">
+						<input onchange="elementChange(this)" type="radio" name="four_digit_display" id="four_digits_plus_weather" value="2" class="weather-only">
 						<label for="four_digits_plus_weather">Four + Weather</label>
 						<input onchange="elementChange(this)" type="radio" name="four_digit_display" id="four_digits_plus_picture" value="3">
 						<label for="four_digits_plus_picture">Four + Picture</label>

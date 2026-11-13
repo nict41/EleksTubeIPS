@@ -133,6 +133,8 @@ More clock faces are in [more_faces](../more_faces) and at [Spider19996/Tube-Clo
 
 The forecast comes from [OpenWeatherMap](https://openweathermap.org/), and a free account is enough. The clock fetches it every 15 minutes.
 
+The **IPSTube, Home Assistant only** build (`firmware-ipstube_ha-*.bin`) has no weather: Home Assistant shows it instead, and leaving it out saves the clock the memory it needs. That build has no Weather page, no Weather display or Four + Weather choice on the [Clock](#clock) page, no weather icons on the Clock Faces page and no weather entities in Home Assistant. A display or number of digits that showed the weather falls back to Time or Six.
+
 * **OpenWeatherMap API Key**: create an account and an API key, and paste it here. Once it's set, the web UI shows dots instead of the key. To change it, type the new one over them.
 * **Latitude** and **Longitude** are where the forecast is for, in degrees, such as 40.7128 and -74.0060 for New York. Map apps show them, for example when you right-click a place in Google Maps.
 * **Units**: **Imperial** for °F, or **Metric** for °C.
@@ -331,7 +333,7 @@ Only whole-tube records of the tubes in `order` take part in a transition; anyth
 ```json
 {"tubes":[0,1,2,3,4,5],"needed":[2],"playing":[],"width":135,"height":240,
  "formats":["rgb565","qoi","jpeg"],"batch":true,"batch_buffer":64802,"transitions":["wipe","cascade"],
- "drawing":false,"last_draw_ms":212,"gif":true,"gif_free":1820000,"firmware":"2.5.1"}
+ "drawing":false,"last_draw_ms":212,"gif":true,"gif_free":1820000,"firmware":"2.5.2"}
 ```
 
 `formats`, `batch`, `transitions` and `gif` say what this firmware accepts (older firmware leaves them out), `playing` lists the tubes playing a GIF, and `gif_free` is the space left for GIFs.

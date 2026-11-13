@@ -33,7 +33,9 @@ extern SemaphoreHandle_t memMutex;
 IRAMPtrArray<const char*> MQTTBroker::displayStates {
     "Time",
     "Date",
+#ifndef HA_ONLY	// No weather in the Home Assistant-only build
     "Weather",
+#endif
     "Slideshow",
     "Panels",
     0
@@ -45,11 +47,17 @@ static const char *const ledPatterns[] = { "Dark", "", "Constant", "Rainbow", "P
 // Values match IPSClock::Dimming
 static const char *const offHoursModes[] = { "Blank", "Dim", "Matrix", 0 };
 // Values match IPSClock::Display
+#ifndef HA_ONLY
 static const char *const digitCounts[] = { "Six", "Four AM/PM", "Four + Weather", "Four + Picture", "Four + Panel", 0 };
+#else
+static const char *const digitCounts[] = { "Six", "Four AM/PM", "", "Four + Picture", "Four + Panel", 0 };	// No weather
+#endif
 // Values match IPSClock::DateFormat
 static const char *const dateFormats[] = { "DD-MM-YY", "MM-DD-YY", "YY-MM-DD", 0 };
+#ifndef HA_ONLY
 // The web UI's choices
 static const char *const weatherUnits[] = { "Imperial", "Metric", 0 };
+#endif
 
 // A TEXT_SELECT item holds the option in lower case rather than its index, e.g. "metric" for "Metric".
 // A COORDINATE item holds degrees as text.
@@ -104,6 +112,7 @@ static const Setting settings[] = {
     // Seconds on each of time, date and weather, 0 stays on one
     { NUMBER, "display_cycle", "cycle", "Display Cycle Time", "mdi:autorenew", true, 0, 240, "s" },
 
+#ifndef HA_ONLY
     // The color of monochrome weather icons
     { NUMBER, "weather_hue", "weather", "Weather Hue", "mdi:looks", true, 0, 255 },
     { NUMBER, "weather_saturation", "weather", "Weather Saturation", "mdi:palette", true, 0, 255 },
@@ -112,8 +121,18 @@ static const Setting settings[] = {
     // Changing these fetches the weather again. The API key has no entity because it would have to be published.
     { TEXT_SELECT, "units", "weather", "Weather Units", "mdi:thermometer", true, 0, 0, 0, weatherUnits },
     { COORDINATE, "weather_latitude", "weather", "Weather Latitude", "mdi:latitude", true, -90, 90, "°" },
-    { COORDINATE, "weather_longitude", "weather", "Weather Longitude", "mdi:longitude", true, -180, 180, "°" }
+    { COORDINATE, "weather_longitude", "weather", "Weather Longitude", "mdi:longitude", true, -180, 180, "°" },
+#endif
 };
+
+#ifdef HA_ONLY
+// The weather entities an earlier build published: removed from Home Assistant on every discovery
+static const char *const removedWeatherEntities[][2] = {
+    { "number", "weather_hue" }, { "number", "weather_saturation" }, { "number", "weather_value" },
+    { "select", "units" }, { "number", "weather_latitude" }, { "number", "weather_longitude" },
+    { "select", "weather_icons" }
+};
+#endif
 
 // The directories under /ips whose files can be managed over MQTT, and the config item that selects one of them
 struct FileSet {
@@ -125,7 +144,9 @@ struct FileSet {
 
 static const FileSet fileSets[] = {
     { "faces", "clock_face", "Clock Face", "mdi:clock-digital" },
+#ifndef HA_ONLY
     { "weather", "weather_icons", "Weather Icons", "mdi:weather-partly-cloudy" },
+#endif
     { "slides", "slide_show", "Slide Show", "mdi:image-multiple" }
 };
 
@@ -605,8 +626,12 @@ bool MQTTBroker::publishState() {
             persistentState.reserve(1400);
             persistentState += "{";
             persistentState += rootConfig.toJSON(true, excludes);
+#ifndef HA_ONLY
             persistentState += ",\"weather\":";
             persistentState += rootConfig.get("weather")->toJSON(false, weatherExcludes);
+#else
+            (void)weatherExcludes;	// No weather settings in this build
+#endif
             persistentState += "}";
             client.publish(persistentStateTopic, 1, false, persistentState.c_str());
 
@@ -722,8 +747,13 @@ bool MQTTBroker::sendHADiscoveryMessage() {
 
     doc["cmd_t"] = displayTopic;
     doc["stat_t"] = volatileStateTopic;
+#ifndef HA_ONLY
     doc["val_tpl"] = "{% if value_json.display == 0 %}Time{% elif value_json.display == 1 %}Date{% elif value_json.display == 2 %}Weather{% elif value_json.display == 3 %}Slideshow{% elif value_json.display == 4 %}Panels{% endif %}";
     doc["command_template"] = "{% if value == 'Time' %}0{% elif value == 'Date' %}1{% elif value == 'Weather' %}2{% elif value == 'Slideshow' %}3{% elif value == 'Panels' %}4{% endif %}";
+#else
+    doc["val_tpl"] = "{% if value_json.display == 0 %}Time{% elif value_json.display == 1 %}Date{% elif value_json.display == 3 %}Slideshow{% elif value_json.display == 4 %}Panels{% endif %}";
+    doc["command_template"] = "{% if value == 'Time' %}0{% elif value == 'Date' %}1{% elif value == 'Slideshow' %}3{% elif value == 'Panels' %}4{% endif %}";
+#endif
 
     JsonArray optArray = doc["options"].to<JsonArray>();
     for (int i = 0; displayStates[i] != 0; i++) {
@@ -735,6 +765,12 @@ bool MQTTBroker::sendHADiscoveryMessage() {
     for (const Setting &setting : settings) {
         sendSettingDiscovery(setting, doc);
     }
+#ifdef HA_ONLY
+    doc.clear();
+    for (const auto &entity : removedWeatherEntities) {
+        publishDiscovery(entity[0], entity[1], doc);	// An empty config removes the entity
+    }
+#endif
 
     doc["name"] = "Restart";
     doc["cmd_t"] = restartTopic;
