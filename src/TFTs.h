@@ -78,6 +78,7 @@ public:
   uint8_t getPanelTubes();                      // Bit i set when panel i is a panel tube
   uint8_t getPanelsNeeded();                    // Bit i set when panel i needs a fresh picture
   void clearPanelNeeded(uint8_t panel);
+  void setPanelNeeded(uint8_t panel);           // An unfinished picture: the tube needs a fresh one
   // Draws h full rows of w pixels at (x, y) on a panel tube. rgb565be holds w*h pixels in RGB565,
   // big-endian (high byte first), row by row.
   void drawPanelRows(uint8_t panel, int16_t x, int16_t y, int16_t w, int16_t h, const uint8_t *rgb565be);
