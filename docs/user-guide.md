@@ -4,6 +4,7 @@ How to set up and use a clock running [HA Tubes](https://github.com/nict41/HA-Tu
 
 * [Connecting to Wi-Fi](#connecting-to-wi-fi)
 * [Status messages](#status-messages)
+* [The Home Assistant-only build](#the-home-assistant-only-build)
 * [The web UI](#the-web-ui): [Clock](#clock), [Panels](#panels-page), [LEDs](#leds), [Files](#files), [Weather](#weather), [Screen Saver](#screen-saver), [MQTT](#mqtt-and-home-assistant), [Network](#network), [Info](#info), [About](#about)
 * [Clock buttons](#clock-buttons)
 * [Showing your own text](#showing-your-own-text)
@@ -49,6 +50,15 @@ Messages appear for a few seconds at the bottom of the displays, mostly while th
 | Not enough memory! | The clock was too busy serving web pages to load the clock face, weather icons or slide show it was changing to, so it kept the one it had. Wait a minute and try again. |
 | Couldn't unpack! | The clock face, weather icons or slide show it was changing to couldn't be loaded, so it's showing the one before. The [Files](#files) page says why. |
 
+## The Home Assistant-only build
+
+The **IPSTube, Home Assistant only** build (`firmware-ipstube_ha-*.bin`, **IPSTube, Home Assistant only** in the web installer) is for an IPSTube whose screens all come from Home Assistant, for example from the Tube Display app. It's the IPSTube firmware with two things left out, so the clock has more memory free for pictures, GIFs and transitions:
+
+* **No weather of its own.** Home Assistant has the weather, so the clock doesn't fetch it from OpenWeatherMap. That leaves out the [Weather](#weather) page, the Weather display and the Four + Weather choice on the [Clock](#clock) page (and the weather from Cycle Time, Date), the weather icons on the [Files](#files) page and in the [button](#clock-buttons) menus, and the weather entities in Home Assistant, which are removed from Home Assistant if an earlier build made them. A display or number of digits that showed the weather falls back to Time or Six, and so does `2` sent to `clock/<id>/set/display`.
+* **One web UI browser at a time.** Each open web UI keeps a queue of messages in the clock's memory, so when a second browser or tab opens the web UI, the oldest one is disconnected. Reload it to use it there again.
+
+Everything else is the same as the IPSTube build: the time and date, slide shows, LEDs, the screen saver, clock faces, panels, GIFs and Wi-Fi updates. Both builds use the same file system, and you can switch between them with a normal Wi-Fi update of the firmware file; settings are kept.
+
 ## The web UI
 
 Go to your clock's hostname followed by `.local`: http://ipstube.local on an IPSTube, http://elekstubeips.local on an EleksTube IPS, unless you changed it. If that doesn't work on your phone or computer, use the IP address the clock shows when it joins your Wi-Fi network. To see it again, unplug the clock and plug it back in. If the web UI has a login, set on the [Network](#network) page, your browser asks for it.
@@ -72,7 +82,7 @@ There's no Save button. A change takes effect on the clock straight away, and th
 <img src="ui/clock.webp" alt="The Clock page" width="400">
 
 * **Display** chooses what the clock shows: the **Time**, the **Date**, the **Weather** forecast, a **Slide Show** of pictures or **Panels**, pictures streamed to the displays over HTTP, see [Showing pictures from Home Assistant (panels)](#showing-pictures-from-home-assistant-panels). The clock's mode button cycles through the first four. While Panels is showing, the button asks Home Assistant's Tube Display app for its next screen instead, see [Clock buttons](#clock-buttons).
-* **Cycle Time, Date, Weather** shows each of the time, the date and the weather for this many seconds, then moves on to the next. 0 turns it off. The weather is skipped if there's no OpenWeatherMap API key. A slide show isn't part of the cycle, and gives way to the time.
+* **Cycle Time, Date, Weather** shows each of the time, the date and the weather for this many seconds, then moves on to the next. 0 turns it off. The weather is skipped if there's no OpenWeatherMap API key, and the Home Assistant-only build calls it **Cycle Time, Date** and has no weather in the cycle. A slide show isn't part of the cycle, and gives way to the time.
 * **Number of Digits**, **12/24 Hour** and **Leading Zero** are shown when Display is Time:
   * **Six** shows hours, minutes and seconds.
   * **Four AM/PM** shows hours and minutes, a flashing colon, and AM or PM on the last display in 12-hour time.
@@ -134,7 +144,7 @@ More clock faces are in [more_faces](../more_faces) and at [Spider19996/Tube-Clo
 
 The forecast comes from [OpenWeatherMap](https://openweathermap.org/), and a free account is enough. The clock fetches it every 15 minutes.
 
-The **IPSTube, Home Assistant only** build (`firmware-ipstube_ha-*.bin`) has no weather: Home Assistant shows it instead, and leaving it out saves the clock the memory it needs. That build has no Weather page, no Weather display or Four + Weather choice on the [Clock](#clock) page, no weather icons on the Clock Faces page and no weather entities in Home Assistant. A display or number of digits that showed the weather falls back to Time or Six.
+The [Home Assistant-only build](#the-home-assistant-only-build) has no weather, so it has no Weather page.
 
 * **OpenWeatherMap API Key**: create an account and an API key, and paste it here. Once it's set, the web UI shows dots instead of the key. To change it, type the new one over them.
 * **Latitude** and **Longitude** are where the forecast is for, in degrees, such as 40.7128 and -74.0060 for New York. Map apps show them, for example when you right-click a place in Google Maps.
@@ -174,7 +184,7 @@ Topics start with `clock/<id>`, where `<id>` is the clock's **MQTT ID** from the
 | Topic | Payload |
 |---|---|
 | `clock/<id>/set/brightness` | 10 to 255 |
-| `clock/<id>/set/display` | 0 for the time, 1 the date, 2 the weather, 3 the slide show, 4 panels |
+| `clock/<id>/set/display` | 0 for the time, 1 the date, 2 the weather (not in the Home Assistant-only build), 3 the slide show, 4 panels |
 | `clock/<id>/set/screen_saver` | `ON` or `OFF` |
 | `clock/<id>/set/custom` | Up to six characters to show instead of the time, see [Showing your own text](#showing-your-own-text) |
 | `clock/<id>/set/backlight_state` | `ON` or `OFF` |
@@ -266,7 +276,7 @@ When the displays are off for the night (outside the Display On hours):
 * Press any button to show the displays for 10 seconds.
 * Hold power to turn the displays back on, until you hold it again or until the next time Display On turns them off.
 
-On the IPSTube, pressing power switches between the time, the date, the weather and the slide show, and holding it works as above.
+On the IPSTube, pressing power switches between the time, the date, the weather and the slide show, and holding it works as above. The [Home Assistant-only build](#the-home-assistant-only-build) skips the weather, and its menus have no weather icons.
 
 **While panels are showing** (Display set to Panels), pressing the button (mode, or power on the IPSTube) doesn't change the display mode. Instead the clock publishes `next` on `clock/<id>/button`, and the [Tube Display](https://github.com/nict41/nict41-s-HA-Apps/tree/main/tube_display) app shows its next screen:
 

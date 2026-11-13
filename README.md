@@ -78,7 +78,7 @@ two GPUs' load and memory (bottom). Rendered by the app, they look like this:*
 <img src="docs/ui/clock.webp" alt="The Clock page" width="250"> <img src="docs/ui/menu.webp" alt="The menu" width="250"> <img src="docs/ui/panels.webp" alt="The Panels page" width="250">
 
 ### Everything from the original firmware
-* Time, date, weather forecast and slide show display modes, with NTP time sync and automatic time
+* Time, date, weather forecast (not in the Home Assistant-only build) and slide show display modes, with NTP time sync and automatic time
   zone / DST handling.
 * Clock faces and weather icon sets you can upload, select and switch with the buttons.
 * LED backlight effects, a digital-rain screen saver, and on/off hours.
@@ -95,7 +95,9 @@ two GPUs' load and memory (bottom). Rendered by the app, they look like this:*
    * An IPSTube used only through Home Assistant can take **IPSTube, Home Assistant only**: the same
      firmware without the clock's own weather (Home Assistant has the weather), which leaves more
      memory free for pictures and GIFs. Its web UI and its Home Assistant entities leave the weather
-     settings out too. You can switch between the two later with a normal Wi-Fi update.
+     settings out too, and its web UI is open in one browser at a time. You can switch between the two
+     later with a normal Wi-Fi update. See
+     [The Home Assistant-only build](docs/user-guide.md#the-home-assistant-only-build).
    * Back up the original firmware first if you might want it back (see
      [Installation](https://github.com/judge2005/EleksTubeIPS/wiki/Installation) in the original
      project's wiki).
