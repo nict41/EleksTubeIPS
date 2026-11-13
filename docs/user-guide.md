@@ -303,22 +303,34 @@ POST http://<clock>/panel?tube=N[&x=X&y=Y&w=W&h=H]
 
 The reply is `200 ok`, `400` if the arguments or the body length are wrong, `409` if that tube isn't a panel tube in the current mode, or `503` if another picture is being sent at the same time. If the web UI has a login, the request needs it too, like any other page: add `--digest -u <user>:<password>` with curl.
 
-Several pictures can go in one request, which saves most of a request's cost (roughly 20 to 40 ms) when the pictures are small, such as a band of each tube:
+Several pictures can go in one request, which is quicker than one request each (a whole screen of six tubes takes about a quarter of a second), and the clock can play a transition with them:
 
 ```
-POST http://<clock>/panel/batch
+POST http://<clock>/panel/batch[?transition=wipe&duration=500&order=0,1,2,3,4,5]
+POST http://<clock>/panel/batch?transition=cascade&gap=90&order=2,3,1,4,0,5
 ```
 
-The body is a run of records, each a 14-byte header and then the picture. The header's numbers are little-endian: `tube` (1 byte), `format` (1 byte: 0 for raw RGB565, 1 for QOI), `x`, `y`, `w`, `h` (2 bytes each) and the picture's length in bytes (4 bytes). Each picture is exactly what `POST /panel` takes for that rectangle in that format; JPEG isn't accepted here, as it has to be held in memory whole, so send it on its own. The records are drawn one after another as they arrive. The replies are the same as for `POST /panel`, and if a record is wrong the ones before it have been drawn already. Keep a batch of QOI pictures to about 3 KB: the clock decodes QOI more slowly than Wi-Fi delivers it, and past about 5 KB the upload stalls for half a second or more while the clock catches up. Raw batches can be any size.
+The body is a run of records, each a 14-byte header and then the picture. The header's numbers are little-endian: `tube` (1 byte), `format` (1 byte: 0 for raw RGB565, 1 for QOI, 2 for JPEG), `x`, `y`, `w`, `h` (2 bytes each) and the picture's length in bytes (4 bytes). Each picture is exactly what `POST /panel` takes for that rectangle in that format.
+
+The clock keeps the whole batch in memory as it arrives and draws it once it's all there, on a task of its own, so the reply comes as soon as the body is in. (Decoding on the web server's task while the body arrives would lose packets, which stalls the upload for half a second or more.) `batch_buffer` in `GET /panel` is the largest batch it can hold right now, about 30 to 48 KB, and less while GIFs play. A bigger batch is answered `413`. Then send it in smaller pieces, or the pictures one by one; a batch of at most 4 KB is still taken, drawn as it arrives, but without JPEG or a transition.
+
+Transitions are played by the clock at the displays' own speed, with exact timing:
+
+* `transition=wipe`: the tubes are drawn from the top down, each starting a little after the one before it in `order`, and the whole wipe takes `duration` ms (500 if left out).
+* `transition=cascade`: the tubes are drawn one after another in `order`, `gap` ms apart (90 if left out).
+* `order` is the tubes in the order they change, for example `5,4,3,2,1,0` from the right or `2,3,1,4,0,5` from the centre. Without it, tubes 0 to 5.
+
+Only whole-tube records of the tubes in `order` take part in a transition; anything else in the batch is drawn first. While a batch is being drawn, `GET /panel` says `"drawing":true`, and another `POST /panel` or `/panel/batch` is answered `503` with an `X-Retry-After-Ms` header saying when to try again. Add `interrupt=1` to a batch that replaces the one being drawn, for example the next screen after a button press: the clock stops the old one at once, marks the tubes it didn't finish as `needed`, and answers `503` with a short `X-Retry-After-Ms`. `last_draw_ms` is how long the last batch took to draw.
 
 `GET http://<clock>/panel` replies which tubes are panel tubes and which of them still need a picture:
 
 ```json
 {"tubes":[0,1,2,3,4,5],"needed":[2],"playing":[],"width":135,"height":240,
- "formats":["rgb565","qoi","jpeg"],"batch":true,"gif":true,"gif_free":1820000,"firmware":"2.5.0"}
+ "formats":["rgb565","qoi","jpeg"],"batch":true,"batch_buffer":37516,"transitions":["wipe","cascade"],
+ "drawing":false,"last_draw_ms":212,"gif":true,"gif_free":1820000,"firmware":"2.5.0"}
 ```
 
-`formats`, `batch` and `gif` say what this firmware accepts (older firmware leaves them out), `playing` lists the tubes playing a GIF, and `gif_free` is the space left for GIFs.
+`formats`, `batch`, `transitions` and `gif` say what this firmware accepts (older firmware leaves them out), `playing` lists the tubes playing a GIF, and `gif_free` is the space left for GIFs.
 
 Pictures are never stored, so after the screen saver, a status message, a restart or switching modes, a tube goes black and is listed in `needed` until a picture is sent to it again. Over MQTT, the same two lists are `panel_tubes` and `panels_needed` in `clock/<id>/volatile/state`, as numbers with bit 0 for the leftmost tube, so Home Assistant can watch `panels_needed` and send the pictures again.
 

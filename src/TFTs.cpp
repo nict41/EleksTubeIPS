@@ -684,6 +684,16 @@ void TFTs::clearPanelNeeded(uint8_t panel) {
   release();
 }
 
+void TFTs::setPanelNeeded(uint8_t panel) {
+  if (panel >= NUM_DIGITS) {
+    return;
+  }
+
+  claim();
+  panelsNeeded |= (uint8_t)(1 << panel);
+  release();
+}
+
 /*
  * Draws h full rows of w pixels at (x, y) on a panel tube. The pixels are RGB565, big-endian
  * (high byte first), row by row, as sent to /panel. Unlike drawImage() this doesn't use the
@@ -694,7 +704,12 @@ void TFTs::drawPanelRows(uint8_t panel, int16_t x, int16_t y, int16_t w, int16_t
     return;
   }
 
-  uint16_t row[TFT_WIDTH];  // One row at a time, dimmed like the images loaded from files are
+  // A few rows at a time, dimmed like the images loaded from files are. Each pushImage() sets the
+  // display's window first, so pushing several rows per call is much quicker than one by one.
+  // Static rather than on the stack (the GIF player calls this deep in its decoder): it's only
+  // used holding claim(), so the tasks that draw panels never share it at the same time.
+  static const int16_t CHUNK_ROWS = 4;
+  static uint16_t chunk[TFT_WIDTH * CHUNK_ROWS];
 
   claim();
 #ifdef USE_DMA
@@ -708,12 +723,15 @@ void TFTs::drawPanelRows(uint8_t panel, int16_t x, int16_t y, int16_t w, int16_t
   bool oldSwapBytes = getSwapBytes();
   setSwapBytes(true);
 
-  for (int16_t r = 0; r < h; r++) {
+  int16_t perChunk = (int16_t)((TFT_WIDTH * CHUNK_ROWS) / w);
+  for (int16_t r = 0; r < h; r += perChunk) {
+    int16_t n = h - r < perChunk ? h - r : perChunk;
     const uint8_t *src = rgb565be + (size_t)r * w * 2;
-    for (int16_t col = 0; col < w; col++) {
-      row[col] = dimColor((uint16_t)((src[col * 2] << 8) | src[col * 2 + 1]));
+    size_t count = (size_t)n * w;
+    for (size_t i = 0; i < count; i++) {
+      chunk[i] = dimColor((uint16_t)((src[i * 2] << 8) | src[i * 2 + 1]));
     }
-    pushImage(x, y + r, w, 1, row);
+    pushImage(x, y + r, w, n, chunk);
   }
 
   setSwapBytes(oldSwapBytes);

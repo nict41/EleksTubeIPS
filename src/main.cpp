@@ -42,6 +42,7 @@
 #include "WiFiWatchdog.h"
 #include "QoiStream.h"
 #include "JpegPanel.h"
+#include "PanelDraw.h"
 #include "GifPlayer.h"
 
 //#define DEBUG(...) { Serial.println(__VA_ARGS__); }
@@ -1583,10 +1584,15 @@ struct PanelUpload {
 	uint32_t recordLeft = 0;		// Picture bytes of the current record still to come
 	uint16_t records = 0;			// Records drawn so far
 	bool replacedWhole = false;		// A record replaced a whole tube, so MQTT needs telling
+	// A batch held in memory as it arrives, then drawn by PanelDraw's task (with its transition)
+	uint8_t *stage = NULL;
+	size_t stageLen = 0;
+	PanelDraw::Transition transition;
 
 	AsyncWebServerRequest *resultRequest = NULL;	// The request the reply below is for
 	int resultCode = 0;
 	const char *resultMessage = "";
+	uint32_t resultRetryMs = 0;		// With a 503: when to try again, sent as X-Retry-After-Ms
 };
 static PanelUpload panelUpload;
 
@@ -1602,16 +1608,32 @@ static void panelUploadFreeJpeg() {
 	panelUpload.jpegLen = 0;
 }
 
+// A batch's memory is only held until it's handed to PanelDraw, or the upload fails
+static void panelUploadFreeStage() {
+	if (panelUpload.stage != NULL) {
+		PanelDraw::freeBuffer(panelUpload.stage);
+		panelUpload.stage = NULL;
+	}
+}
+
 // Leaves the reply for the request handler and makes the state ready for the next upload
 static void panelUploadFinish(AsyncWebServerRequest *request, int code, const char *message) {
 	if (panelUpload.request == request) {
 		panelUpload.active = false;
 		panelUpload.request = NULL;
 		panelUploadFreeJpeg();
+		panelUploadFreeStage();
 	}
 	panelUpload.resultRequest = request;
 	panelUpload.resultCode = code;
 	panelUpload.resultMessage = message;
+	panelUpload.resultRetryMs = 0;
+}
+
+// A 503 because a batch is still being drawn: says when to try again
+static void panelUploadBusyDrawing(AsyncWebServerRequest *request, uint32_t retryMs) {
+	panelUploadFinish(request, 503, "busy drawing");
+	panelUpload.resultRetryMs = retryMs;
 }
 
 // Sends the complete rows waiting in panelUpload.rows[] to the tube
@@ -1633,6 +1655,7 @@ static void panelUploadWatchDisconnect(AsyncWebServerRequest *request) {
 			panelUpload.active = false;
 			panelUpload.request = NULL;
 			panelUploadFreeJpeg();
+			panelUploadFreeStage();
 		}
 		if (panelUpload.resultRequest == request) {
 			panelUpload.resultRequest = NULL;
@@ -1693,6 +1716,10 @@ static bool panelUploadStart(AsyncWebServerRequest *request, size_t total) {
 	}
 	if (OTA::otaBusy()) {
 		panelUploadFinish(request, 503, "a firmware update is in progress");
+		return false;
+	}
+	if (PanelDraw::busy()) {
+		panelUploadBusyDrawing(request, PanelDraw::msLeft());	// Pictures are drawn in the order they come
 		return false;
 	}
 
@@ -1792,11 +1819,7 @@ static size_t panelRawFeed(const uint8_t *data, size_t len) {
 
 // A whole tube was replaced: put the status message back on top of it and mark it as done
 static void panelWholeTubeReplaced(uint8_t tube) {
-	tfts->claim();
-	tfts->chip_select.setDigit(TFTs::panelToDigit(tube));
-	tfts->drawStatus();
-	tfts->release();
-	tfts->clearPanelNeeded(tube);
+	PanelDraw::wholeTubeReplaced(tube);
 }
 
 // Done once the whole body is in, whatever its format: the bookkeeping for a replaced tube and the reply
@@ -1873,6 +1896,56 @@ void panelBodyHandler(AsyncWebServerRequest *request, uint8_t *data, size_t len,
 	}
 }
 
+#define PANEL_BATCH_STREAM_MAX 4096	// Largest batch drawn as it arrives when it can't be held in memory
+
+// Reads transition=none|wipe|cascade, duration (ms, a wipe's length), gap (ms between a cascade's
+// tubes) and order (tubes, e.g. 2,3,1,4,0,5). Returns NULL or what's wrong.
+static const char *panelParseTransition(AsyncWebServerRequest *request, PanelDraw::Transition &t) {
+	t = PanelDraw::Transition();
+	if (!request->hasArg("transition")) {
+		return NULL;
+	}
+	String kind = request->arg("transition");
+	if (kind == "wipe") {
+		t.kind = PanelDraw::WIPE;
+	} else if (kind == "cascade") {
+		t.kind = PanelDraw::CASCADE;
+	} else if (kind != "none") {
+		return "transition must be none, wipe or cascade";
+	}
+	if (request->hasArg("duration")) {
+		long v = request->arg("duration").toInt();
+		if (v < 0 || v > 10000) {
+			return "duration must be 0 to 10000 ms";
+		}
+		t.durationMs = (uint16_t)v;
+	}
+	if (request->hasArg("gap")) {
+		long v = request->arg("gap").toInt();
+		if (v < 0 || v > 5000) {
+			return "gap must be 0 to 5000 ms";
+		}
+		t.gapMs = (uint16_t)v;
+	}
+	if (request->hasArg("order")) {
+		String order = request->arg("order");
+		uint8_t seen = 0;
+		t.orderLen = 0;
+		for (size_t i = 0; i < order.length(); i++) {
+			char c = order[i];
+			if (c == ',') {
+				continue;
+			}
+			if (c < '0' || c > '5' || (seen & (1 << (c - '0'))) || t.orderLen == 6) {
+				return "order must be tubes 0 to 5, each at most once, e.g. 2,3,1,4,0,5";
+			}
+			seen |= (uint8_t)(1 << (c - '0'));
+			t.order[t.orderLen++] = (uint8_t)(c - '0');
+		}
+	}
+	return NULL;
+}
+
 static uint16_t panelLe16(const uint8_t *p) {
 	return (uint16_t)(p[0] | (p[1] << 8));
 }
@@ -1892,6 +1965,29 @@ static bool panelBatchStart(AsyncWebServerRequest *request, size_t total) {
 		panelUploadFinish(request, 503, "a firmware update is in progress");
 		return false;
 	}
+	PanelDraw::Transition transition;
+	const char *err = panelParseTransition(request, transition);
+	if (err != NULL) {
+		panelUploadFinish(request, 400, err);
+		return false;
+	}
+	if (PanelDraw::busy()) {
+		// interrupt: this batch replaces the one being drawn (a new screen), so stop that one
+		if (request->hasArg("interrupt")) {
+			PanelDraw::interrupt();
+			panelUploadBusyDrawing(request, 20);
+		} else {
+			panelUploadBusyDrawing(request, PanelDraw::msLeft());
+		}
+		return false;
+	}
+	uint8_t *stage = PanelDraw::takeBuffer(total);
+	if (stage == NULL && (transition.kind != PanelDraw::NONE || total > PANEL_BATCH_STREAM_MAX)) {
+		// Drawn as it arrives, a big batch would lose packets and stall, see PanelDraw.h
+		panelUploadFinish(request, 413, "batch too big to hold in memory now, see batch_buffer in GET /panel");
+		return false;
+	}
+
 	panelUpload.request = request;
 	panelUpload.active = true;
 	panelUpload.batch = true;
@@ -1900,6 +1996,9 @@ static bool panelBatchStart(AsyncWebServerRequest *request, size_t total) {
 	panelUpload.recordLeft = 0;
 	panelUpload.records = 0;
 	panelUpload.replacedWhole = false;
+	panelUpload.stage = stage;
+	panelUpload.stageLen = total;
+	panelUpload.transition = transition;
 	panelUploadWatchDisconnect(request);
 	return true;
 }
@@ -1979,13 +2078,15 @@ static bool panelBatchRecordEnd(AsyncWebServerRequest *request) {
 }
 
 /*
- * Streams the body of POST /panel/batch: several pictures in one request, drawn one after another as
- * they arrive, which saves the cost of a request per picture. The body is a run of records, each a
- * 14-byte header (little-endian) and then the picture:
- *   tube (1 byte), format (1 byte: 0 = rgb565, 1 = qoi), x, y, w, h (2 bytes each), length (4 bytes)
- * A picture is exactly what POST /panel takes for that rectangle in that format. JPEG isn't taken
- * here: it needs its whole body in memory, so it goes to POST /panel on its own. The records before
- * a bad one are drawn; panelHandler() sends the reply.
+ * The body of POST /panel/batch[?transition=wipe|cascade&duration=&gap=&order=&interrupt=1]: several
+ * pictures in one request, each record a 14-byte header (little-endian: tube, format 0 = rgb565 /
+ * 1 = qoi / 2 = jpeg, x, y, w, h, length) and then the picture as POST /panel takes it.
+ *
+ * Normally the body is only copied into memory as it arrives and PanelDraw's task draws it once it's
+ * all in, playing the transition if one was asked for, see PanelDraw.h. When there isn't the memory
+ * to hold it, a batch of at most PANEL_BATCH_STREAM_MAX bytes (raw or QOI, no transition) is drawn as
+ * it arrives instead, and a bigger one is refused with 413. The records before a bad one are drawn;
+ * panelHandler() sends the reply.
  */
 void panelBatchBodyHandler(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
 	if (index == 0 && !panelBatchStart(request, total)) {
@@ -1995,42 +2096,29 @@ void panelBatchBodyHandler(AsyncWebServerRequest *request, uint8_t *data, size_t
 		return;	// The rest of a request that was rejected
 	}
 
-	size_t offset = 0;
-	while (offset < len) {
-		if (!panelUpload.inRecord) {
-			size_t take = PANEL_BATCH_HEADER - panelUpload.recordHeaderBytes;
-			if (take > len - offset) {
-				take = len - offset;
-			}
-			memcpy(panelUpload.recordHeader + panelUpload.recordHeaderBytes, data + offset, take);
-			panelUpload.recordHeaderBytes += take;
-			offset += take;
-			if (panelUpload.recordHeaderBytes == PANEL_BATCH_HEADER) {
-				panelUpload.recordHeaderBytes = 0;
-				if (!panelBatchRecordStart(request)) {
-					return;
-				}
-			}
-			continue;
-		}
-
-		size_t take = panelUpload.recordLeft;
-		if (take > len - offset) {
-			take = len - offset;
-		}
-		if (panelUpload.format == PanelUpload::QOI) {
-			if (panelUpload.qoi.feed(data + offset, take, panelQoiPixel, NULL) == QoiStream::ERROR) {
-				panelUploadFinish(request, 400, panelUpload.qoi.error());
-				return;
-			}
-		} else {
-			panelRawFeed(data + offset, take);	// The header's length is w*h*2, so it takes all of it
-		}
-		offset += take;
-		panelUpload.recordLeft -= take;
-		if (panelUpload.recordLeft == 0 && !panelBatchRecordEnd(request)) {
+	if (panelUpload.stage != NULL) {
+		// Held in memory as it arrives, then drawn by PanelDraw's task, see PanelDraw.h
+		if (index + len > panelUpload.stageLen) {
+			panelUploadFinish(request, 400, "batch longer than announced");
 			return;
 		}
+		memcpy(panelUpload.stage + index, data, len);
+		if (index + len < total) {
+			return;
+		}
+		int code = 200;
+		const char *err = PanelDraw::start(panelUpload.stage, total, panelUpload.transition, &code);
+		if (err != NULL) {
+			panelUploadFinish(request, code, err);	// Frees the memory
+			return;
+		}
+		panelUpload.stage = NULL;	// PanelDraw's now
+		panelUploadFinish(request, 200, "ok");
+		return;
+	}
+
+	if (!panelBatchFeed(request, data, len)) {
+		return;
 	}
 
 	if (index + len >= total) {
@@ -2056,7 +2144,12 @@ void panelHandler(AsyncWebServerRequest *request) {
 	if (request->method() == HTTP_POST) {
 		if (panelUpload.resultRequest == request) {
 			panelUpload.resultRequest = NULL;
-			request->send(panelUpload.resultCode, "text/plain", panelUpload.resultMessage);
+			AsyncWebServerResponse *response = request->beginResponse(panelUpload.resultCode, "text/plain",
+				panelUpload.resultMessage);
+			if (panelUpload.resultCode == 503 && panelUpload.resultRetryMs > 0) {
+				response->addHeader("X-Retry-After-Ms", String((unsigned long)panelUpload.resultRetryMs));
+			}
+			request->send(response);
 		} else {
 			// No body, so the body handler never saw it
 			if (panelUpload.request == request) {
@@ -2096,7 +2189,11 @@ void panelHandler(AsyncWebServerRequest *request) {
 		}
 	}
 	json += "],\"width\":" + String(TFT_WIDTH) + ",\"height\":" + String(TFT_HEIGHT)
-		+ ",\"formats\":[\"rgb565\",\"qoi\",\"jpeg\"],\"batch\":true,\"gif\":true,\"gif_free\":"
+		+ ",\"formats\":[\"rgb565\",\"qoi\",\"jpeg\"],\"batch\":true,\"batch_buffer\":"
+		+ String((unsigned long)PanelDraw::bufferFree())
+		+ ",\"transitions\":[\"wipe\",\"cascade\"],\"drawing\":" + String(PanelDraw::busy() ? "true" : "false")
+		+ ",\"last_draw_ms\":" + String((unsigned long)PanelDraw::lastDurationMs())
+		+ ",\"gif\":true,\"gif_free\":"
 		+ String((unsigned long)GifPlayer::freeBytes())
 		+ ",\"firmware\":\"" FIRMWARE_VERSION "\"}";
 	request->send(200, "application/json", json);
@@ -3021,6 +3118,7 @@ void setup() {
 	// Setup TFTs
 	tfts->begin(LittleFS);
 	GifPlayer::begin();
+	PanelDraw::begin();
 	tfts->fillScreen(TFT_BLACK);
 	tfts->setTextColor(TFT_WHITE, TFT_BLACK);
 	tfts->setCursor(0, 0, 2);
