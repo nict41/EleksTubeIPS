@@ -40,6 +40,9 @@
 #include "Uptime.h"
 #include "TLSArena.h"
 #include "WiFiWatchdog.h"
+#include "QoiStream.h"
+#include "JpegPanel.h"
+#include "GifPlayer.h"
 
 //#define DEBUG(...) { Serial.println(__VA_ARGS__); }
 #ifndef DEBUG
@@ -735,6 +738,10 @@ volatile bool displayBufferLent = false;
 
 // Everything that draws, which uses the display buffer. Only call it holding memMutex.
 void updateDisplays() {
+	// GIF players keep their decoders in the display buffer; it's needed again outside panel mode
+	if (IPSClock::getTimeOrDate().value != IPSClock::PANELS || screenSaver->isOn()) {
+		GifPlayer::stopAllForDisplay();
+	}
 	if (displayBufferLent) {
 		displayBufferLent = false;
 		tfts->invalidateAllDigits();
@@ -998,11 +1005,12 @@ void weatherTaskFn(void *pArg) {
 			xSemaphoreTake(memMutex, portMAX_DELAY);
 			// The displays aren't drawn while this holds memMutex, so TLS can have their buffer, the
 			// biggest block of memory the clock has. Transfers to the displays aren't DMA, so they've finished.
-			if (lendDisplayBuffer) {
+			bool lent = lendDisplayBuffer && !GifPlayer::active();	// GIF decoders live in that buffer
+			if (lent) {
 				TLSArena::begin(StaticSprite::output_buffer, sizeof(StaticSprite::output_buffer));
 			}
 			bool gotWeather = weatherService->getWeatherInfo();
-			if (lendDisplayBuffer) {
+			if (lent) {
 				// Never seen, but if TLS kept some of the buffer, it mustn't end up in a later loan too
 				if (!TLSArena::end()) {
 					Serial.println("TLS didn't give back all of the display buffer, so it won't be lent again");
@@ -1534,6 +1542,8 @@ void customHandler(AsyncWebServerRequest *request) {
 // Rows drawn per drawPanelRows() call while streaming a picture to a panel tube, so the buffer
 // stays small and the whole picture is never held in memory
 #define PANEL_ROWS_PER_CALL 4
+#define PANEL_JPEG_MAX (48 * 1024)			// Largest JPEG body accepted
+#define PANEL_JPEG_HEADROOM (16 * 1024)		// Heap left over after taking the body: decoder + everything else
 
 // The /panel upload in progress. ESPAsyncWebServer calls the body handler as the body arrives and the
 // request handler only once all of it has, so the body handler checks the request and draws, and the
@@ -1551,6 +1561,12 @@ struct PanelUpload {
 	uint8_t rowCount = 0;	// Complete rows waiting in rows[]
 	uint8_t row[TFT_WIDTH * 2];
 	uint8_t rows[PANEL_ROWS_PER_CALL * TFT_WIDTH * 2];
+	// format=rgb565 (raw, the default), qoi (decoded as it arrives) or jpeg (decoded once all of it
+	// is in jpeg[], which is malloc'd for the upload and freed when it ends)
+	enum Format : uint8_t { RGB565, QOI, JPEG } format = RGB565;
+	QoiStream qoi;
+	uint8_t *jpeg = NULL;
+	size_t jpegLen = 0;
 
 	AsyncWebServerRequest *resultRequest = NULL;	// The request the reply below is for
 	int resultCode = 0;
@@ -1558,11 +1574,19 @@ struct PanelUpload {
 };
 static PanelUpload panelUpload;
 
+// The JPEG body is only held for the upload it belongs to
+static void panelUploadFreeJpeg() {
+	free(panelUpload.jpeg);
+	panelUpload.jpeg = NULL;
+	panelUpload.jpegLen = 0;
+}
+
 // Leaves the reply for the request handler and makes the state ready for the next upload
 static void panelUploadFinish(AsyncWebServerRequest *request, int code, const char *message) {
 	if (panelUpload.request == request) {
 		panelUpload.active = false;
 		panelUpload.request = NULL;
+		panelUploadFreeJpeg();
 	}
 	panelUpload.resultRequest = request;
 	panelUpload.resultCode = code;
@@ -1599,9 +1623,29 @@ static bool panelUploadStart(AsyncWebServerRequest *request, size_t total) {
 		panelUploadFinish(request, 400, "rectangle must be inside the tube");
 		return false;
 	}
+	PanelUpload::Format format = PanelUpload::RGB565;
+	if (request->hasArg("format")) {
+		String f = request->arg("format");
+		if (f == "qoi") {
+			format = PanelUpload::QOI;
+		} else if (f == "jpeg" || f == "jpg") {
+			format = PanelUpload::JPEG;
+		} else if (f != "rgb565") {
+			panelUploadFinish(request, 400, "format must be rgb565, qoi or jpeg");
+			return false;
+		}
+	}
 	size_t expected = (size_t)w * h * 2;
-	if (total != expected) {
+	if (format == PanelUpload::RGB565 && total != expected) {
 		panelUploadFinish(request, 400, "body length must be w*h*2");
+		return false;
+	}
+	if (format == PanelUpload::QOI && total < 14 + 8) {
+		panelUploadFinish(request, 400, "not a QOI file");
+		return false;
+	}
+	if (format == PanelUpload::JPEG && (total < 4 || total > PANEL_JPEG_MAX)) {
+		panelUploadFinish(request, 413, "a JPEG must be at most 48 KB");
 		return false;
 	}
 	if (!tfts->isPanelTube((uint8_t)tube)) {
@@ -1617,8 +1661,21 @@ static bool panelUploadStart(AsyncWebServerRequest *request, size_t total) {
 		return false;
 	}
 
+	if (format == PanelUpload::JPEG) {
+		// The decoder needs all of it; leave room for the decoder and everything else
+		if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < total + PANEL_JPEG_HEADROOM
+				|| (panelUpload.jpeg = (uint8_t*)malloc(total)) == NULL) {
+			panelUploadFinish(request, 503, "not enough memory for this JPEG");
+			return false;
+		}
+		panelUpload.jpegLen = total;
+	}
+
+	GifPlayer::stop((uint8_t)tube);	// A picture replaces whatever GIF played on the tube
+
 	panelUpload.request = request;
 	panelUpload.active = true;
+	panelUpload.format = format;
 	panelUpload.tube = (uint8_t)tube;
 	panelUpload.x = (int16_t)x;
 	panelUpload.y = (int16_t)y;
@@ -1629,17 +1686,58 @@ static bool panelUploadStart(AsyncWebServerRequest *request, size_t total) {
 	panelUpload.rowBytes = 0;
 	panelUpload.drawnRows = 0;
 	panelUpload.rowCount = 0;
+	if (format == PanelUpload::QOI) {
+		panelUpload.qoi.begin((uint16_t)w, (uint16_t)h);
+	}
 	request->onDisconnect([request]() {
 		// Aborted part way through, so the tube still needs a fresh picture
 		if (panelUpload.request == request) {
 			panelUpload.active = false;
 			panelUpload.request = NULL;
+			panelUploadFreeJpeg();
 		}
 		if (panelUpload.resultRequest == request) {
 			panelUpload.resultRequest = NULL;
 		}
 	});
 	return true;
+}
+
+// One more decoded pixel (RGB565, big-endian) for the row being assembled; complete rows are drawn
+// PANEL_ROWS_PER_CALL at a time like the raw upload's
+static void panelPutPixel(uint8_t hi, uint8_t lo) {
+	size_t rowLen = (size_t)panelUpload.w * 2;
+	panelUpload.row[panelUpload.rowBytes++] = hi;
+	panelUpload.row[panelUpload.rowBytes++] = lo;
+	if (panelUpload.rowBytes == rowLen) {
+		memcpy(panelUpload.rows + (size_t)panelUpload.rowCount * rowLen, panelUpload.row, rowLen);
+		panelUpload.rowBytes = 0;
+		panelUpload.rowCount++;
+		if (panelUpload.rowCount == PANEL_ROWS_PER_CALL) {
+			panelUploadFlushRows();
+		}
+	}
+}
+
+static void panelQoiPixel(void *ctx, uint8_t r, uint8_t g, uint8_t b) {
+	(void)ctx;
+	uint16_t c = (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+	panelPutPixel((uint8_t)(c >> 8), (uint8_t)(c & 0xFF));
+}
+
+// Done once the whole body is in, whatever its format: the bookkeeping for a replaced tube and the reply
+static void panelUploadComplete(AsyncWebServerRequest *request) {
+	if (panelUpload.x == 0 && panelUpload.y == 0 && panelUpload.w == TFT_WIDTH && panelUpload.h == TFT_HEIGHT) {
+		// The whole tube was replaced, so put the status message back on top of it and tell
+		// Home Assistant the tube has its picture now
+		tfts->claim();
+		tfts->chip_select.setDigit(TFTs::panelToDigit(panelUpload.tube));
+		tfts->drawStatus();
+		tfts->release();
+		tfts->clearPanelNeeded(panelUpload.tube);
+		requestMqttPublish();
+	}
+	panelUploadFinish(request, 200, "ok");
 }
 
 /*
@@ -1653,6 +1751,42 @@ void panelBodyHandler(AsyncWebServerRequest *request, uint8_t *data, size_t len,
 	}
 	if (!panelUpload.active || panelUpload.request != request) {
 		return;	// The rest of a request that was rejected
+	}
+
+	if (panelUpload.format == PanelUpload::QOI) {
+		QoiStream::Result r = panelUpload.qoi.feed(data, len, panelQoiPixel, NULL);
+		if (r == QoiStream::ERROR) {
+			panelUploadFinish(request, 400, panelUpload.qoi.error());
+			return;
+		}
+		if (index + len >= total) {
+			if (!panelUpload.qoi.complete()) {
+				panelUploadFinish(request, 400, "QOI image incomplete");
+				return;
+			}
+			panelUploadFlushRows();
+			panelUploadComplete(request);
+		}
+		return;
+	}
+
+	if (panelUpload.format == PanelUpload::JPEG) {
+		if (index + len > panelUpload.jpegLen) {
+			panelUploadFinish(request, 400, "JPEG body longer than announced");
+			return;
+		}
+		memcpy(panelUpload.jpeg + index, data, len);
+		if (index + len >= total) {
+			const char *err = jpegDrawPanel(panelUpload.jpeg, panelUpload.jpegLen, panelUpload.tube,
+				panelUpload.x, panelUpload.y, panelUpload.w, panelUpload.h);
+			panelUploadFreeJpeg();
+			if (err != NULL) {
+				panelUploadFinish(request, 400, err);
+				return;
+			}
+			panelUploadComplete(request);
+		}
+		return;
 	}
 
 	size_t rowLen = (size_t)panelUpload.w * 2;
@@ -1684,19 +1818,7 @@ void panelBodyHandler(AsyncWebServerRequest *request, uint8_t *data, size_t len,
 			return;
 		}
 		panelUploadFlushRows();
-
-		if (panelUpload.x == 0 && panelUpload.y == 0 && panelUpload.w == TFT_WIDTH && panelUpload.h == TFT_HEIGHT) {
-			// The whole tube was replaced, so put the status message back on top of it and tell
-			// Home Assistant the tube has its picture now
-			tfts->claim();
-			tfts->chip_select.setDigit(TFTs::panelToDigit(panelUpload.tube));
-			tfts->drawStatus();
-			tfts->release();
-			tfts->clearPanelNeeded(panelUpload.tube);
-			requestMqttPublish();
-		}
-
-		panelUploadFinish(request, 200, "ok");
+		panelUploadComplete(request);
 	}
 }
 
@@ -1740,9 +1862,117 @@ void panelHandler(AsyncWebServerRequest *request) {
 			sep = ",";
 		}
 	}
+	json += "],\"playing\":[";
+	sep = "";
+	uint8_t playing = GifPlayer::playingMask();
+	for (uint8_t i = 0; i < NUM_DIGITS; i++) {
+		if (playing & (1 << i)) {
+			json += sep + String(i);
+			sep = ",";
+		}
+	}
 	json += "],\"width\":" + String(TFT_WIDTH) + ",\"height\":" + String(TFT_HEIGHT)
+		+ ",\"formats\":[\"rgb565\",\"qoi\",\"jpeg\"],\"gif\":true,\"gif_free\":"
+		+ String((unsigned long)GifPlayer::freeBytes())
 		+ ",\"firmware\":\"" FIRMWARE_VERSION "\"}";
 	request->send(200, "application/json", json);
+}
+
+/*
+ * GIFs stored on the clock and played on panel tubes, see GifPlayer.h.
+ *   GET    /gif                      {"files":[{"name","size"}],"free":bytes}
+ *   POST   /gif?name=<name>.gif      body = the GIF file (at most 600 KB and 135x240)
+ *   DELETE /gif?name=<name>.gif      (or POST /gif/delete?name=...)
+ *   POST   /gif/play?tube=N&name=<name>.gif[&x=X&y=Y][&loop=0|1][&bg=RRGGBB]
+ *   POST   /gif/stop[?tube=N]        the last frame stays; no tube = all
+ * Like /panel, the body callback does the work and the request handler only replies.
+ */
+static AsyncWebServerRequest *gifUploadRequest = NULL;
+static const char *gifUploadError = NULL;
+
+void gifBodyHandler(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+	if (index == 0) {
+		gifUploadRequest = request;
+		gifUploadError = GifPlayer::uploadBegin(request->arg("name").c_str(), total);
+		request->onDisconnect([request]() {
+			if (gifUploadRequest == request) {
+				GifPlayer::uploadAbort();
+				gifUploadRequest = NULL;
+			}
+		});
+	}
+	if (gifUploadRequest != request || gifUploadError != NULL) {
+		return;
+	}
+	gifUploadError = GifPlayer::uploadWrite(data, len);
+	if (gifUploadError == NULL && index + len >= total) {
+		gifUploadError = GifPlayer::uploadEnd();
+	}
+}
+
+void gifHandler(AsyncWebServerRequest *request) {
+	if (request->method() == HTTP_GET) {
+		request->send(200, "application/json", GifPlayer::listJson());
+		return;
+	}
+	if (request->method() == HTTP_DELETE) {
+		String name = request->arg("name");
+		request->send(GifPlayer::remove(name.c_str()) ? 200 : 404, "text/plain", "ok");
+		return;
+	}
+	// POST: the upload
+	if (gifUploadRequest != request) {
+		request->send(400, "text/plain", "the body must be the GIF file");
+		return;
+	}
+	gifUploadRequest = NULL;
+	if (gifUploadError != NULL) {
+		request->send(400, "text/plain", gifUploadError);
+	} else {
+		request->send(200, "text/plain", "ok");
+	}
+}
+
+void gifDeleteHandler(AsyncWebServerRequest *request) {
+	String name = request->arg("name");
+	request->send(GifPlayer::remove(name.c_str()) ? 200 : 404, "text/plain", "ok");
+}
+
+void gifPlayHandler(AsyncWebServerRequest *request) {
+	int tube = request->hasArg("tube") ? request->arg("tube").toInt() : -1;
+	if (tube < 0 || tube >= NUM_DIGITS) {
+		request->send(400, "text/plain", "tube must be 0 to 5");
+		return;
+	}
+	int x = request->hasArg("x") ? request->arg("x").toInt() : -1;
+	int y = request->hasArg("y") ? request->arg("y").toInt() : -1;
+	bool loop = !request->hasArg("loop") || request->arg("loop") != "0";
+	uint16_t bg = 0;
+	if (request->hasArg("bg")) {
+		uint32_t rgb = (uint32_t)strtoul(request->arg("bg").c_str(), NULL, 16);
+		bg = (uint16_t)(((rgb >> 8) & 0xF800) | ((rgb >> 5) & 0x07E0) | ((rgb >> 3) & 0x001F));
+	}
+	String name = request->arg("name");
+	const char *err = GifPlayer::play((uint8_t)tube, name.c_str(), (int16_t)x, (int16_t)y, loop, bg);
+	if (err == NULL) {
+		request->send(200, "text/plain", "ok");
+	} else {
+		int code = strstr(err, "already playing") != NULL || strstr(err, "busy") != NULL ? 503
+			: strstr(err, "panel tube") != NULL ? 409 : strstr(err, "no such") != NULL ? 404 : 400;
+		request->send(code, "text/plain", err);
+	}
+}
+
+void gifStopHandler(AsyncWebServerRequest *request) {
+	if (request->hasArg("tube")) {
+		int tube = request->arg("tube").toInt();
+		if (tube >= 0 && tube < NUM_DIGITS) {
+			GifPlayer::stop((uint8_t)tube);
+		}
+	} else {
+		GifPlayer::stopAll();
+	}
+	request->send(200, "text/plain", "ok");
 }
 
 /*
@@ -2089,6 +2319,11 @@ void configureWebServer() {
 	server->on("/", HTTP_GET, mainHandler).setFilter(ON_STA_FILTER);
 	server->on("/custom", HTTP_GET | HTTP_POST, customHandler);
 	server->on("/panel", HTTP_GET | HTTP_POST, panelHandler, NULL, panelBodyHandler);
+	// The specific /gif/... routes first: a handler for /gif would also take /gif/<anything>
+	server->on("/gif/play", HTTP_POST, gifPlayHandler);
+	server->on("/gif/stop", HTTP_POST, gifStopHandler);
+	server->on("/gif/delete", HTTP_POST, gifDeleteHandler);
+	server->on("/gif", HTTP_GET | HTTP_POST | HTTP_DELETE, gifHandler, NULL, gifBodyHandler);
 	server->on("/update", HTTP_POST, updateHandler, updateUploadHandler, updateBodyHandler);
 	server->on("/t", HTTP_POST, timeHandler).setFilter(ON_AP_FILTER);
 	server->on("/upload_face", HTTP_POST, handleUploadDone, handleUpload);
@@ -2559,6 +2794,7 @@ void setup() {
 
 	// Setup TFTs
 	tfts->begin(LittleFS);
+	GifPlayer::begin();
 	tfts->fillScreen(TFT_BLACK);
 	tfts->setTextColor(TFT_WHITE, TFT_BLACK);
 	tfts->setCursor(0, 0, 2);

@@ -297,14 +297,20 @@ POST http://<clock>/panel?tube=N[&x=X&y=Y&w=W&h=H]
 
 * `tube` is the display, 0 to 5 from left to right. Each is 135x240 pixels. Without `x`, `y`, `w` and `h`, the whole tube is replaced.
 * The body is the raw pixels: RGB565, big-endian (high byte first), row by row, so exactly `w*h*2` bytes. For a whole tube, 135*240*2 = 64800 bytes.
+* Or a compressed picture, much quicker over Wi-Fi (the clock receives about 300 KB a second, so a raw tube takes about 0.2 s):
+  * `&format=qoi`: a [QOI](https://qoiformat.org/) image of exactly `w` x `h` pixels. Lossless and decoded as it arrives, so it needs no extra memory. A typical dashboard tube is 1 to 3 KB instead of 64.8 KB.
+  * `&format=jpeg`: a baseline JPEG of exactly `w` x `h` pixels, at most 48 KB, decoded by the ESP32's built-in decoder once all of it has arrived. Best for photos and camera pictures; it's refused with `503` when the clock hasn't the memory free at that moment, so send raw or QOI then.
 
 The reply is `200 ok`, `400` if the arguments or the body length are wrong, `409` if that tube isn't a panel tube in the current mode, or `503` if another picture is being sent at the same time. If the web UI has a login, the request needs it too, like any other page: add `--digest -u <user>:<password>` with curl.
 
 `GET http://<clock>/panel` replies which tubes are panel tubes and which of them still need a picture:
 
 ```json
-{"tubes":[0,1,2,3,4,5],"needed":[2],"width":135,"height":240}
+{"tubes":[0,1,2,3,4,5],"needed":[2],"playing":[],"width":135,"height":240,
+ "formats":["rgb565","qoi","jpeg"],"gif":true,"gif_free":1820000,"firmware":"2.4.0"}
 ```
+
+`formats` and `gif` say what this firmware accepts (older firmware leaves them out), `playing` lists the tubes playing a GIF, and `gif_free` is the space left for GIFs.
 
 Pictures are never stored, so after the screen saver, a status message, a restart or switching modes, a tube goes black and is listed in `needed` until a picture is sent to it again. Over MQTT, the same two lists are `panel_tubes` and `panels_needed` in `clock/<id>/volatile/state`, as numbers with bit 0 for the leftmost tube, so Home Assistant can watch `panels_needed` and send the pictures again.
 
@@ -318,6 +324,24 @@ python3 tools/send_panel.py <clock-host> --status
 ```
 
 `--tube N` resizes and crops the image to fill the tube, and sends it there. `--strip` crops the image to fill all six tubes side by side (810x240), splits it into six and sends them to tubes 0 to 5 one after another. `--status` prints the `GET /panel` reply.
+
+## Animated GIFs
+
+GIFs can be stored on the clock and played on panel tubes by the clock itself, so an animation costs no Wi-Fi traffic while it plays. Up to two tubes play at once, each GIF at its own frame rate (at most 50 frames a second).
+
+```
+GET    http://<clock>/gif                                   list: {"files":[{"name","size"}],"free":bytes}
+POST   http://<clock>/gif?name=rain.gif                     body = the GIF file, Content-Type: application/octet-stream
+DELETE http://<clock>/gif?name=rain.gif                     (or POST /gif/delete?name=rain.gif)
+POST   http://<clock>/gif/play?tube=2&name=rain.gif[&x=X&y=Y][&loop=0][&bg=RRGGBB]
+POST   http://<clock>/gif/stop[?tube=2]                     the last frame stays; no tube = all
+```
+
+* A GIF can be at most 135x240 and 600 KB, and 300 KB of the clock's storage is always kept free for its faces and icons. Names are letters, digits, `.`, `_` and `-`, ending in `.gif`.
+* `play` centres the GIF on the tube unless `x`/`y` are given, clears the tube to `bg` first (default black), and loops unless `loop=0`. Transparent pixels show what was there before.
+* Sending a picture to a tube with `/panel` stops its GIF. Leaving panel mode, the screen saver and a firmware update stop them all.
+* `play` answers `503` if two GIFs already play, `409` if the tube isn't a panel tube, `404` for an unknown file.
+* The GIFs' decoders use the 64 KB display buffer that the clock's own faces use, which is free while the tubes show panels, so playing GIFs takes no extra memory.
 
 ## Uploading files over MQTT
 
