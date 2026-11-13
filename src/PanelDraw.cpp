@@ -769,7 +769,10 @@ size_t bufferFree() {
 	return heapFree();
 }
 
-uint8_t *takeBuffer(size_t len) {
+uint8_t *takeBuffer(size_t len, bool *retrySoon) {
+	if (retrySoon != nullptr) {
+		*retrySoon = false;
+	}
 	if (len == 0 || running || displayReserved || task == NULL) {
 		return NULL;
 	}
@@ -783,6 +786,14 @@ uint8_t *takeBuffer(size_t len) {
 			}
 			cmd = CMD_RELEASE;	// No answer in time, or no: make sure it isn't held for nothing
 			xQueueSend(commands, &cmd, 0);
+			// Held for a moment by the clock's loop or MQTT (a brightness change blanks every tube,
+			// for instance): the heap would do, but then up to 24 KB of it goes for nothing. Only
+			// the standard build's weather fetch holds it for long, and then the heap it is.
+			TaskHandle_t holder = xSemaphoreGetMutexHolder(memMutex);
+			if (retrySoon != nullptr && !GifPlayer::active() && (holder == NULL || holder != weatherTask)) {
+				*retrySoon = true;
+				return NULL;
+			}
 		} else {
 			displayReserved = false;
 		}

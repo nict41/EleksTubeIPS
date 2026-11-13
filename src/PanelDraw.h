@@ -55,7 +55,9 @@ namespace PanelDraw {
 	// For the web server's task. bufferFree() is the largest batch that can be held right now (0
 	// while one is being drawn): 64800 bytes in the display buffer, less from the heap while GIFs play.
 	size_t bufferFree();
-	uint8_t *takeBuffer(size_t len);	// NULL when it can't be held now
+	// NULL when it can't be held now. *retrySoon is then true if the display buffer is only busy for
+	// a moment (the clock's loop or MQTT holds it): rather than taking the heap, ask to retry shortly.
+	uint8_t *takeBuffer(size_t len, bool *retrySoon = nullptr);
 	void freeBuffer(uint8_t *buf);
 
 	// Checks the records in buf and hands them to the task, which frees buf when it's done.
