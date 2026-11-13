@@ -51,7 +51,11 @@ two GPUs' load and memory (bottom). Rendered by the app, they look like this:*
   * an entity picker, colour thresholds and a condition builder
   * a gallery of ready-made screens, import and export, and a YAML view
 * Home Assistant entities and actions to show a screen, flash a message, pause, and turn rotation on
-  or off; night mode dims the clock after sunset.
+  or off.
+* A **Brightness** card: day and night brightness that follows the sun, dimmer screens and quiet
+  hours at night.
+* Offers each new HA Tubes release to the clock's **Firmware** update entity, and pauses while the
+  clock updates.
 
 ![The Tube Display screen editor](docs/ha-tubes/editor.webp)
 
@@ -61,7 +65,8 @@ two GPUs' load and memory (bottom). Rendered by the app, they look like this:*
 * Three ways to update:
   * upload a `.bin` on the clock's **Info** page
   * `curl --data-binary @firmware.bin http://<clock>/update`
-  * press **Install** on the clock's **Firmware** update entity in Home Assistant
+  * press **Install** on the clock's **Firmware** update entity in Home Assistant (the Tube Display
+    app offers each new release there)
 * Optional MD5 check, progress on the tubes and in Home Assistant, automatic restart into the new
   firmware.
 * The file system image (web UI, built-in faces and icons) can be updated over Wi-Fi too
@@ -129,6 +134,8 @@ page. For an IPSTube they go at these addresses:
       * `clock_host`: the clock's IP address
       * `clock_mqtt_id`: shown on the clock's MQTT page, e.g. `209374ipstube`
       * `clock_user` / `clock_password`, if the clock's web UI has a login
+      * `firmware_variant`: `ipstube_ha` if you installed **IPSTube, Home Assistant only**, so it
+        offers you the right firmware updates
    3. Start it, and turn on **Show in sidebar**.
 3. Open **Tube Display** from the sidebar to build screens:
    1. Add a screen and tap a tube.

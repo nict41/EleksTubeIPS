@@ -8,6 +8,7 @@ How to set up and use a clock running [HA Tubes](https://github.com/nict41/HA-Tu
 * [Clock buttons](#clock-buttons)
 * [Showing your own text](#showing-your-own-text)
 * [Showing pictures from Home Assistant (panels)](#showing-pictures-from-home-assistant-panels)
+* [Animated GIFs](#animated-gifs)
 * [Uploading files over MQTT](#uploading-files-over-mqtt)
 * [Updating over Wi-Fi](#updating-over-wi-fi)
 
@@ -50,7 +51,7 @@ Messages appear for a few seconds at the bottom of the displays, mostly while th
 
 ## The web UI
 
-Go to http://elekstubeips.local, or your clock's hostname followed by `.local`. If that doesn't work on your phone or computer, use the IP address the clock shows when it joins your Wi-Fi network. To see it again, unplug the clock and plug it back in. If the web UI has a login, set on the [Network](#network) page, your browser asks for it.
+Go to your clock's hostname followed by `.local`: http://ipstube.local on an IPSTube, http://elekstubeips.local on an EleksTube IPS, unless you changed it. If that doesn't work on your phone or computer, use the IP address the clock shows when it joins your Wi-Fi network. To see it again, unplug the clock and plug it back in. If the web UI has a login, set on the [Network](#network) page, your browser asks for it.
 
 <img src="ui/clock.webp" alt="The Clock page in the light theme" width="360"> <img src="ui/clock-dark.webp" alt="The Clock page in the dark theme" width="360">
 
@@ -193,7 +194,7 @@ It also publishes:
 
 Besides the settings, Home Assistant gets a **Firmware** update entity (under Configuration) and a **Restart** button. The two pictures above are from the original firmware, so they don't show the Firmware entity or the Panels options.
 
-For example, an automation can follow the sun with the clock's brightness: full brightness in daylight, fading to the lowest as the sun goes down:
+The [Tube Display](https://github.com/nict41/nict41-s-HA-Apps/tree/main/tube_display) app can do this for you: its **Brightness** card sets a day and a night brightness and follows the sun between them (turn off any automation of your own that sets the brightness, or the two will fight). Without the app, an automation can follow the sun with the clock's brightness: full brightness in daylight, fading to the lowest as the sun goes down:
 
 ```yaml
 - alias: Clock brightness follows the sun
@@ -411,20 +412,24 @@ Install the firmware once over USB with the **Full** option of the web installer
 * Or with curl, sending the raw file as the body:
 
 ```
-curl --data-binary @firmware-ipstube-2.3.0.bin -H 'Content-Type: application/octet-stream' \
+curl --data-binary @firmware-ipstube-X.bin -H 'Content-Type: application/octet-stream' \
   http://<clock>/update
 ```
 
 If the web UI has a login, add `--digest -u <user>:<password>`. To update the file system image as well (the web UI pages and the built-in faces and icons), send `littlefs*.bin` with `?target=fs`: `curl --data-binary @littlefs8MB-X.bin -H 'Content-Type: application/octet-stream' 'http://<clock>/update?target=fs'`, or pick that file on the Info page, which sends it there by its name. This replaces uploaded faces, icons and slides with the built-in ones; settings are kept. An optional `md5` query argument checks the file, e.g. `http://<clock>/update?md5=<32 hex digits>`. The reply is `200 Updated, restarting`, or the error, such as `501` on a clock with no second slot or `409` when an update is already running.
 
-With Home Assistant, a **Firmware** update entity appears under the clock's Configuration. It offers an update once the broker has a message on `clock/<id>/ota/latest` (retained) with a newer version. Nothing publishes that message for you yet: GitHub serves release files over HTTPS only, which the clock can't download, so put the firmware on a plain `http://` server on your network (for example Home Assistant's `/local` folder, `http://<home-assistant>:8123/local/firmware-ipstube-2.3.0.bin`) and publish, retained:
+With Home Assistant, a **Firmware** update entity appears under the clock's Configuration. It offers an update once the broker has a message on `clock/<id>/ota/latest` (retained) with a newer version, and **Install** makes the clock download the file and restart into it.
+
+The [Tube Display](https://github.com/nict41/nict41-s-HA-Apps/tree/main/tube_display) app publishes that message for you: it checks for a new HA Tubes release every 6 hours, downloads the firmware for your build and serves it to the clock. Set its `firmware_variant` option to your build, `ipstube_ha` for **IPSTube, Home Assistant only** (the part after `firmware-` in the file name), and leave `firmware_updates` on.
+
+Without the app, publish it yourself. GitHub serves release files over HTTPS only, which the clock can't download, so put the firmware on a plain `http://` server on your network (for example Home Assistant's `/local` folder, `http://<home-assistant>:8123/local/firmware-ipstube-X.bin`) and publish, retained:
 
 ```json
-{"version":"2.3.0","url":"http://<home-assistant>:8123/local/firmware-ipstube-2.3.0.bin","md5":"<32 hex>","release_url":"https://github.com/nict41/HA-Tubes/releases/tag/v2.3.0","title":"HA Tubes 2.3.0"}
+{"version":"X","url":"http://<home-assistant>:8123/local/firmware-ipstube-X.bin","md5":"<32 hex>","release_url":"https://github.com/nict41/HA-Tubes/releases/tag/vX","title":"HA Tubes X"}
 ```
 
-Only `http://` URLs work, the clock doesn't have enough memory for TLS. Pressing **Install** on the entity makes the clock download the file and restart into it; the entity's state is on `clock/<id>/ota/state` (retained), and the install command goes to `clock/<id>/set/ota_install` with payload `install` (don't set the retain flag).
+Only `http://` URLs work, the clock doesn't have enough memory for TLS. The entity's state is on `clock/<id>/ota/state` (retained), and the install command goes to `clock/<id>/set/ota_install` with payload `install` (don't set the retain flag).
 
-If the [Tube Display](https://github.com/nict41/nict41-s-HA-Apps/tree/main/tube_display) app is running, stop it while you update (Settings → Apps → Tube Display → Stop): pictures it sends during the upload can make the update fail. Start it again afterwards.
+While an update runs, the clock refuses pictures (`503`), and Tube Display 0.6 or later sends nothing until the clock has restarted, whichever way the update was started. With an older Tube Display, stop it while you update (Settings → Apps → Tube Display → Stop) and start it again afterwards: pictures it sends during the upload can make the update fail.
 
 If an update fails or the new firmware doesn't run, recover over USB as before: the web installer or `esptool.py` writes a slot directly.
