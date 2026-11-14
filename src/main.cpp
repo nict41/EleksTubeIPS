@@ -31,14 +31,18 @@
 #include "WSMenuHandler.h"
 #include "WSConfigHandler.h"
 #include "WSInfoHandler.h"
+#ifndef HA_ONLY	// The Home Assistant-only build leaves the weather code out (weather.h keeps its settings)
 #include "OpenWeatherMapWeatherService.h"
+#endif
 #include "weather.h"
 #include "ScreenSaver.h"
 #include "mqttBroker.h"
 #include "OTA.h"
 #include "IRAMPtrArray.h"
 #include "Uptime.h"
+#ifndef HA_ONLY
 #include "TLSArena.h"
+#endif
 #include "WiFiWatchdog.h"
 #include "QoiStream.h"
 #include "JpegPanel.h"
@@ -107,8 +111,10 @@ TFTs *tfts = NULL;
 eSPIMenu::Menu *menu;
 Backlights *backlights = NULL;
 IPSClock *ipsClock = NULL;
+#ifndef HA_ONLY
 Weather *weather = NULL;
 WeatherService *weatherService = NULL;
+#endif
 ImageUnpacker *imageUnpacker = NULL;
 
 ScreenSaver *screenSaver;
@@ -145,11 +151,13 @@ TaskHandle_t clockTask;
 TaskHandle_t improvTask;
 TaskHandle_t ledTask;
 TaskHandle_t commitEEPROMTask;
-TaskHandle_t weatherTask;
+TaskHandle_t weatherTask = NULL;	// Never started in the Home Assistant-only build, see PanelDraw::bufferFree()
 
 SemaphoreHandle_t wsMutex;
 SemaphoreHandle_t memMutex;
+#ifndef HA_ONLY
 QueueHandle_t weatherQueue;
+#endif
 QueueHandle_t wsPendingQueue;	// Web UI updates from tasks other than async_tcp, see broadcastUpdate()
 
 AsyncWiFiManagerParameter *hostnameParam;
@@ -500,10 +508,17 @@ void onTimeServerChanged(ConfigItem<String> &item) {
 	tcpip_callback(useTimeServer, NULL);	// The SNTP module must only be used from lwIP's thread once the network is up
 }
 
+#ifndef HA_ONLY
 void onWeatherConfigChanged(ConfigItem<String> &item) {
 	uint32_t value = COORDINATES_UPDATE;
 	xQueueSend(weatherQueue, &value, 0);
 }
+
+// Draws the weather again when it shows, e.g. once something has drawn over the displays
+inline void redrawWeather() { weather->redraw(); }
+#else
+inline void redrawWeather() {}
+#endif
 
 void broadcastFSChange() {
 	String freeSpace = String(fsFreeBytes());
@@ -561,12 +576,12 @@ void haOnlyFallbacks() {
 #endif
 
 #ifdef HA_ONLY
-// Deletes the slide show pictures the file system image brings (or an earlier build unpacked): this
-// build has no slide show, so they'd only take up room that GIFs could use. A file system update
-// brings them back, so this runs at every start. The folders themselves stay.
-static void removeSlideFiles() {
+// Deletes the slide show pictures and weather icons the file system image brings (or an earlier build
+// unpacked): this build has no slide show or weather, so they'd only take up room that GIFs could use.
+// A file system update brings them back, so this runs at every start. The folders themselves stay.
+static void removeUnusedFiles() {
 	bool removed = false;
-	for (const char *path : { "/ips/slides", "/ips/slides_cache" }) {
+	for (const char *path : { "/ips/slides", "/ips/slides_cache", "/ips/weather", "/ips/weather_cache" }) {
 		fs::File dir = LittleFS.open(path);
 		if (!dir || !dir.isDirectory()) {
 			continue;
@@ -588,7 +603,7 @@ void onDisplayChanged(ConfigItem<int> &item) {
 	lastDisplayChange = millis();	// However it changed, show it for a whole cycle
 	tfts->invalidateAllDigits();
 
-	weather->redraw();
+	redrawWeather();
 }
 
 // Moves on to the next of time, date and weather once the display has been shown for the cycle time.
@@ -615,13 +630,15 @@ void cycleDisplays() {
 }
 
 void onBrightnessChanged(ConfigItem<byte> &item) {
-	weather->redraw();
+	redrawWeather();
 }
 
+#ifndef HA_ONLY
 template <class T>
 void onWeatherColorChanged(ConfigItem<T> &item) {
-	weather->redraw();
+	redrawWeather();
 }
+#endif
 
 bool menuDrawn = false;
 
@@ -687,7 +704,7 @@ void onButtonEvent(const Button *button, Button::Event evt) {
 			} else {
 				tfts->invalidateAllDigits();
 				menuDrawn = false;
-				weather->redraw();
+				redrawWeather();
 			}
 		}
 
@@ -697,7 +714,7 @@ void onButtonEvent(const Button *button, Button::Event evt) {
 				tfts->fillScreen(TFT_BLACK);
 				tfts->invalidateAllDigits();
 				menuDrawn = false;
-				weather->redraw();
+				redrawWeather();
 			} else {
 				// ... or switching display modes. This *is* the mode button after all
 				IntConfigItem &dateOrTime = IPSClock::getTimeOrDate();
@@ -809,7 +826,7 @@ void updateDisplays() {
 	if (displayBufferLent) {
 		displayBufferLent = false;
 		tfts->invalidateAllDigits();
-		weather->redraw();
+		redrawWeather();
 		if (menuDrawn) {
 			redrawMenu();
 		}
@@ -821,7 +838,7 @@ void updateDisplays() {
 	buttonEventCount = 0;
 
 	if (tfts->checkStatus()) {
-		weather->redraw();	// To get rid of the status message
+		redrawWeather();	// To get rid of the status message
 	}
 
 	if (menuDrawn) {
@@ -848,7 +865,7 @@ void updateDisplays() {
 		}
 
 		tfts->setShowDigits(IPSClock::getTimeOrDate());
-#ifndef HA_ONLY	// No slide show in the Home Assistant-only build, so its pictures aren't unpacked
+#ifndef HA_ONLY	// No slide show or weather in the Home Assistant-only build, so their pictures aren't unpacked
 		if (reloadSlides || slidesSet->value != *oldSlidesSet) {
 			reloadSlides = false;
 			slidesSet->value = imageUnpacker->unpackImages("/ips/slides/", "/ips/slides_cache", *slidesSet, *oldSlidesSet);
@@ -860,14 +877,15 @@ void updateDisplays() {
 			tfts->invalidateAllDigits();
 			tfts->release();
 		}
-#endif
 		weather->checkIconPack();
+#endif
 		ipsClock->checkIconPack();
 #ifdef HA_ONLY
 		haOnlyFallbacks();
 #endif
 
 		switch (IPSClock::getTimeOrDate().value) {
+#ifndef HA_ONLY
 			case IPSClock::WEATHER:
 				if (ipsClock->clockOn() || (ipsClock->getDimming() == IPSClock::DIM)) {
 					weather->loop(ipsClock->getBrightness());
@@ -875,6 +893,7 @@ void updateDisplays() {
 					setDisplaysEnabled(false);
 				}
 				break;
+#endif
 			case IPSClock::SLIDE_SHOW:
 			// drop through
 			case IPSClock::PANELS:
@@ -882,9 +901,11 @@ void updateDisplays() {
 			default:
 				if (timeSync->initialized() || rtcTimeSync->initialized()) {
 					ipsClock->loop();
+#ifndef HA_ONLY
 					if (ipsClock->getFourDigitDisplay() == IPSClock::FOUR_WITH_WEATHER && IPSClock::getTimeOrDate().value == IPSClock::TIME) {
 						weather->drawSingleDay(ipsClock->getBrightness(), 0, 0);
 					}
+#endif
 				}
 				break;
 		}
@@ -927,6 +948,7 @@ void clockTaskFn(void *pArg) {
 
 	imageUnpacker = new ImageUnpacker();
 
+#ifndef HA_ONLY
 	weatherService = new OpenWeatherMapWeatherService();
 	WeatherService::getLatitude().setCallback(onWeatherConfigChanged);
 	WeatherService::getLongitude().setCallback(onWeatherConfigChanged);
@@ -939,6 +961,7 @@ void clockTaskFn(void *pArg) {
 	Weather::getWeatherHue().setCallback(onWeatherColorChanged);
 	Weather::getWeatherSaturation().setCallback(onWeatherColorChanged);
 	Weather::getWeatherValue().setCallback(onWeatherColorChanged);
+#endif
 
 	fileSet->setCallback(onFileSetChanged);
 
@@ -1020,6 +1043,7 @@ void clockTaskFn(void *pArg) {
 	}
 }
 
+#ifndef HA_ONLY
 #define DEFAULT_WEATHER_SLEEP (pdMS_TO_TICKS(15 * 60 * 1000))
 #define FIRST_WEATHER_UPTIME (30 * 1000UL)	// ms
 
@@ -1091,7 +1115,7 @@ void weatherTaskFn(void *pArg) {
 				displayBufferLent = true;
 			}
 			xSemaphoreGive(memMutex);
-			weather->redraw();	// Even a failed update can have changed part of the forecast
+			redrawWeather();	// Even a failed update can have changed part of the forecast
 			if (!gotWeather) {
 				DEBUG("Failed to get weather");
 				toSleep = pdMS_TO_TICKS(180000);	// Try again in 3 minutes
@@ -1101,6 +1125,7 @@ void weatherTaskFn(void *pArg) {
 //		Serial.printf("Weather task going back to sleep for %d ticks\n", toSleep);
 	}
 }
+#endif
 
 String getChipId(void)
 {
@@ -1378,9 +1403,11 @@ void updateValue(int screen, String pair) {
 			config.commit();
 			ESP.restart();
 		}
+#ifndef HA_ONLY
 	} else if (_key == "get_weather") {
 		uint32_t value = WEATHER_UPDATE;
 		xQueueSend(weatherQueue, &value, 0);
+#endif
 	} else if (_key == "wifi_ap") {
 		setWiFiAP(value == "true" ? true : false);
 	}
@@ -1487,8 +1514,10 @@ void filesChanged(const String &dir, const String &name, bool uploaded) {
 	if (uploaded) {
 		if (dir == "faces" && name == IPSClock::getClockFace().value) {
 			ipsClock->reloadClockFace();
+#ifndef HA_ONLY
 		} else if (dir == "weather" && name == Weather::getIconPack().value) {
 			weather->reloadIconPack();
+#endif
 		} else if (dir == "slides" && name == slidesSet->value) {
 			reloadSlides = true;
 		}
@@ -2835,7 +2864,7 @@ void configureWebServer() {
 
 void setFace(const char *menuLabel) {
 	if (IPSClock::getTimeOrDate() == IPSClock::WEATHER) {
-		weather->getIconPack().fromString(menuLabel);
+		Weather::getIconPack().fromString(menuLabel);
 	} else if (IPSClock::getTimeOrDate() == IPSClock::SLIDE_SHOW) {
 		slidesSet->fromString(menuLabel);
 	} else if (IPSClock::getTimeOrDate() == IPSClock::PANELS) {
@@ -2903,7 +2932,7 @@ void initFacesMenu() {
 
 	String current = ipsClock->getClockFace();
 	if (display == IPSClock::WEATHER)
-		current = weather->getIconPack();
+		current = Weather::getIconPack();
 	else if (display == IPSClock::SLIDE_SHOW)
 		current = slidesSet->value;
 
@@ -3131,10 +3160,12 @@ void connectedHandler() {
 	MDNS.begin(hostName.value.c_str());
 	MDNS.addService("http", "tcp", 80);
 
+#ifndef HA_ONLY
 	if (!wifiManager->isAP()) {
 		uint32_t value = WEATHER_UPDATE;
 		xQueueSend(weatherQueue, &value, 0);	// May not work if AP is active
 	}
+#endif
 }
 
 void apChange(AsyncWiFiManager *wifiManager) {
@@ -3144,8 +3175,10 @@ void apChange(AsyncWiFiManager *wifiManager) {
 		tfts->setStatus(ssid);
 	} else {
 		tfts->setStatus("AP Destroyed...");
+#ifndef HA_ONLY
 		uint32_t value = WEATHER_UPDATE;
 		xQueueSend(weatherQueue, &value, 0);	// Not enough memory to make an HTTPS request while AP is active
+#endif
 	}
 
 	// So the Network page's switch doesn't go on saying otherwise when the access point closes by itself
@@ -3273,20 +3306,24 @@ void setup() {
 	*/
 	Serial.begin(115200);
 	Serial.setDebugOutput(false);
+#ifndef HA_ONLY
 	TLSArena::init();	// Before the weather task can use TLS
+#endif
 
 	DEBUG("Setup...");
 
 	wsMutex = xSemaphoreCreateMutex();
 	memMutex = xSemaphoreCreateMutex();
 	fsSpaceMutex = xSemaphoreCreateMutex();
+#ifndef HA_ONLY
     weatherQueue = xQueueCreate(5, sizeof(uint32_t));
+#endif
     wsPendingQueue = xQueueCreate(8, sizeof(String*));
 	tfts = new TFTs();
 
 	LittleFS.begin();
 #ifdef HA_ONLY
-	removeSlideFiles();
+	removeUnusedFiles();
 #endif
 
 	// Setup TFTs
