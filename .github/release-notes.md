@@ -1,5 +1,5 @@
 # What's new #
-* **No slide show in the Home Assistant-only build.** Tube Display shows your pictures, so the Home Assistant-only build leaves out the clock's own slide show: Slide Show and Four + Picture on the Clock page, Slide Show on the Files page, and the Slide Show entity in Home Assistant (removed if an earlier build made it). A clock set to show the slide show goes back to the time. Its button now switches between the time and the date. The slide show pictures that come with the file system are deleted when the clock starts, which leaves about 0.5 MB more room for GIFs. The standard builds keep the slide show.
+* **The weather code is gone from the Home Assistant-only build.** That build already didn't fetch the weather; now the code for it, and the secure connection it needed, isn't built in at all, which makes the firmware about 130 KB smaller. The weather icons that come with the file system are deleted when the clock starts, like the slide show pictures, which leaves about 100 KB more room for GIFs. The weather settings are kept, for a switch back to a standard build. The standard builds still have the weather.
 
 # Installation #
 The IPSTube clocks (H401/H402 and the hardware-dimming one) can now update themselves over Wi-Fi, see [Updating over Wi-Fi](https://github.com/nict41/HA-Tubes/blob/main/docs/user-guide.md#updating-over-wi-fi). The other clocks still can't, so flash them over USB. The easiest way is the [web installer]($installer$), which works in Chrome or Edge on a computer. The [installation guide](https://github.com/judge2005/EleksTubeIPS/wiki/Installation) covers connecting the clock and backing up its original firmware.
@@ -24,7 +24,7 @@ NOTE: littlefs8MB-$version$.bin, bootloader8MB.bin and partitions8MB.bin are onl
 | Si Hai | `firmware-sihai-$version$.bin` |
 | PCBWay PunkCyber | `firmware-punkcyber-$version$.bin` |
 | **IPSTube (H401/H402) with Home Assistant, recommended** | `firmware-ipstube_ha-$version$.bin` |
-| IPSTube (H401/H402), standard, with the clock's own weather | `firmware-ipstube-$version$.bin` |
+| IPSTube (H401/H402), standard, with the clock's own weather and slide shows | `firmware-ipstube-$version$.bin` |
 | IPSTube with hardware dimming | `firmware-ipstube_dim-$version$.bin` |
 
 Some clocks sold as an EleksTube IPS V2 need the V1 firmware. If every display shows the same digit after installing, install the other EleksTube version's firmware file.
