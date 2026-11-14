@@ -773,8 +773,10 @@
 			$("#invalid_field_popup").enhanceWithin().popup();
 		});
 
-		// The Home Assistant-only build has no weather ("weather": false in GET /panel): hide its
-		// controls, marked weather-only. A radio button's enhanced wrapper goes with it, and its group
+		// The Home Assistant-only build has no weather and no slide show ("weather": false in GET /panel):
+		// hide their controls, all marked weather-only. (Slide show controls use the same class so that
+		// this file, which lives in the file system and isn't replaced by a firmware update, hides them
+		// in older file system images too.) A radio button's enhanced wrapper goes with it, and its group
 		// is refreshed so the rounded corners land on the buttons left.
 		var noWeather = false;
 

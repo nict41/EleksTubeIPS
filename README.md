@@ -6,11 +6,11 @@ companion Home Assistant app, **Tube Display**, that designs, renders and rotate
 you, and firmware updates over Wi-Fi.
 
 The recommended build is **IPSTube, Home Assistant only**, for an IPSTube whose screens come from
-Home Assistant. It keeps the clock's own time, date, clock faces, slide shows, LEDs and screen saver,
-and leaves out its OpenWeatherMap weather (Home Assistant has the weather) so there's more memory for
-pictures, GIFs and transitions. The web installer chooses it for you. Standard builds, with the weather,
-are there for other clocks and for clocks used without Home Assistant; see
-[Builds](#builds).
+Home Assistant. It keeps the clock's own time, date, clock faces, LEDs and screen saver, and
+leaves out its OpenWeatherMap weather and slide shows (Home Assistant and Tube Display do both) so
+there's more memory for pictures, GIFs and transitions. The web installer chooses it for you.
+Standard builds, with the weather and slide shows, are there for other clocks and for clocks used
+without Home Assistant; see [Builds](#builds).
 
 HA Tubes is based on [EleksTubeIPS](https://github.com/judge2005/EleksTubeIPS) by Paul Andrews
 (judge2005), used under the MIT licence. See [Credits](#credits).
@@ -86,11 +86,9 @@ two GPUs' load and memory (bottom). Rendered by the app, they look like this:*
 <img src="docs/ui/clock.webp" alt="The Clock page" width="250"> <img src="docs/ui/menu.webp" alt="The menu" width="250"> <img src="docs/ui/panels.webp" alt="The Panels page" width="250">
 
 ### Kept from the original firmware
-* Time, date and slide show display modes, with NTP time sync and automatic time zone / DST
-  handling. The clock's own time is what shows when Tube Display pauses or has a `clock` entry in its
+* Time and date display modes, with NTP time sync and automatic time zone / DST handling. The clock's own time is what shows when Tube Display pauses or has a `clock` entry in its
   rotation.
-* Clock faces and slide shows you can upload and choose (on the four-button clocks, with the
-  buttons too).
+* Clock faces you can upload and choose (on the four-button clocks, with the buttons too).
 * LED backlight effects, a digital-rain screen saver, and on/off hours.
 * MQTT with Home Assistant discovery for every setting, custom text, file uploads and motion/light
   sensors.
@@ -99,14 +97,14 @@ two GPUs' load and memory (bottom). Rendered by the app, they look like this:*
 
 | Build | For | Web installer choice |
 |---|---|---|
-| `ipstube_ha` | **Recommended.** An IPSTube (H401, H402) used through Home Assistant. No weather of its own, one web UI browser at a time, more free memory. | IPSTube, Home Assistant only |
-| `ipstube` | An IPSTube used on its own, with the clock's OpenWeatherMap weather display. | IPSTube, standard |
+| `ipstube_ha` | **Recommended.** An IPSTube (H401, H402) used through Home Assistant. No weather or slide show of its own, one web UI browser at a time, more free memory. | IPSTube, Home Assistant only |
+| `ipstube` | An IPSTube used on its own, with the clock's OpenWeatherMap weather and slide shows. | IPSTube, standard |
 | `ipstube_dim` | An IPSTube with the hardware dimming mod. | IPSTube with hardware dimming |
-| `elekstubev1`, `elekstubev2`, `sihai`, `novellifese`, `punkcyber` | Other clocks, with the weather. They have 4 MB of flash, so they can't update over Wi-Fi. | Other clocks |
+| `elekstubev1`, `elekstubev2`, `sihai`, `novellifese`, `punkcyber` | Other clocks, with the weather and slide shows. They have 4 MB of flash, so they can't update over Wi-Fi. | Other clocks |
 
 The two IPSTube builds use the same flash layout and file system, so you can switch between them with
 a normal Wi-Fi update and keep your settings. Where the [User Guide](docs/user-guide.md) describes the
-weather, it applies only to the standard builds.
+weather or slide shows, it applies only to the standard builds.
 
 ## Install the firmware
 

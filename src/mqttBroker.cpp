@@ -33,10 +33,10 @@ extern SemaphoreHandle_t memMutex;
 IRAMPtrArray<const char*> MQTTBroker::displayStates {
     "Time",
     "Date",
-#ifndef HA_ONLY	// No weather in the Home Assistant-only build
+#ifndef HA_ONLY	// No weather or slide show in the Home Assistant-only build
     "Weather",
-#endif
     "Slideshow",
+#endif
     "Panels",
     0
 };
@@ -50,7 +50,7 @@ static const char *const offHoursModes[] = { "Blank", "Dim", "Matrix", 0 };
 #ifndef HA_ONLY
 static const char *const digitCounts[] = { "Six", "Four AM/PM", "Four + Weather", "Four + Picture", "Four + Panel", 0 };
 #else
-static const char *const digitCounts[] = { "Six", "Four AM/PM", "", "Four + Picture", "Four + Panel", 0 };	// No weather
+static const char *const digitCounts[] = { "Six", "Four AM/PM", "", "", "Four + Panel", 0 };	// No weather or slide show
 #endif
 // Values match IPSClock::DateFormat
 static const char *const dateFormats[] = { "DD-MM-YY", "MM-DD-YY", "YY-MM-DD", 0 };
@@ -126,11 +126,12 @@ static const Setting settings[] = {
 };
 
 #ifdef HA_ONLY
-// The weather entities an earlier build published: removed from Home Assistant on every discovery
-static const char *const removedWeatherEntities[][2] = {
+// The weather and slide show entities an earlier build published: removed from Home Assistant on every
+// discovery
+static const char *const removedEntities[][2] = {
     { "number", "weather_hue" }, { "number", "weather_saturation" }, { "number", "weather_value" },
     { "select", "units" }, { "number", "weather_latitude" }, { "number", "weather_longitude" },
-    { "select", "weather_icons" }
+    { "select", "weather_icons" }, { "select", "slide_show" }
 };
 #endif
 
@@ -146,8 +147,8 @@ static const FileSet fileSets[] = {
     { "faces", "clock_face", "Clock Face", "mdi:clock-digital" },
 #ifndef HA_ONLY
     { "weather", "weather_icons", "Weather Icons", "mdi:weather-partly-cloudy" },
-#endif
     { "slides", "slide_show", "Slide Show", "mdi:image-multiple" }
+#endif
 };
 
 // Uploads are written here first so a failed upload doesn't destroy the file it was replacing
@@ -751,8 +752,8 @@ bool MQTTBroker::sendHADiscoveryMessage() {
     doc["val_tpl"] = "{% if value_json.display == 0 %}Time{% elif value_json.display == 1 %}Date{% elif value_json.display == 2 %}Weather{% elif value_json.display == 3 %}Slideshow{% elif value_json.display == 4 %}Panels{% endif %}";
     doc["command_template"] = "{% if value == 'Time' %}0{% elif value == 'Date' %}1{% elif value == 'Weather' %}2{% elif value == 'Slideshow' %}3{% elif value == 'Panels' %}4{% endif %}";
 #else
-    doc["val_tpl"] = "{% if value_json.display == 0 %}Time{% elif value_json.display == 1 %}Date{% elif value_json.display == 3 %}Slideshow{% elif value_json.display == 4 %}Panels{% endif %}";
-    doc["command_template"] = "{% if value == 'Time' %}0{% elif value == 'Date' %}1{% elif value == 'Slideshow' %}3{% elif value == 'Panels' %}4{% endif %}";
+    doc["val_tpl"] = "{% if value_json.display == 0 %}Time{% elif value_json.display == 1 %}Date{% elif value_json.display == 4 %}Panels{% endif %}";
+    doc["command_template"] = "{% if value == 'Time' %}0{% elif value == 'Date' %}1{% elif value == 'Panels' %}4{% endif %}";
 #endif
 
     JsonArray optArray = doc["options"].to<JsonArray>();
@@ -767,7 +768,7 @@ bool MQTTBroker::sendHADiscoveryMessage() {
     }
 #ifdef HA_ONLY
     doc.clear();
-    for (const auto &entity : removedWeatherEntities) {
+    for (const auto &entity : removedEntities) {
         publishDiscovery(entity[0], entity[1], doc);	// An empty config removes the entity
     }
 #endif

@@ -50,18 +50,19 @@ Messages appear for a few seconds at the bottom of the displays, mostly while th
 | An IP address, such as 192.168.1.50 | It has joined your Wi-Fi network at that address. |
 | AP Destroyed... | The access point has closed. |
 | NTP time received... | It has set its time from the time server. |
-| Not enough space! | There isn't room for the clock face, slide show or weather icons it was changing to, so it kept the one it had. See [Files](#files). |
-| Not enough memory! | The clock was too busy serving web pages to load the clock face, slide show or weather icons it was changing to, so it kept the one it had. Wait a minute and try again. |
-| Couldn't unpack! | The clock face, slide show or weather icons it was changing to couldn't be loaded, so it's showing the one before. The [Files](#files) page says why. |
+| Not enough space! | There isn't room for the clock face (or, in the standard builds, weather icons or slide show) it was changing to, so it kept the one it had. See [Files](#files). |
+| Not enough memory! | The clock was too busy serving web pages to load the clock face (or weather icons or slide show) it was changing to, so it kept the one it had. Wait a minute and try again. |
+| Couldn't unpack! | The clock face (or weather icons or slide show) it was changing to couldn't be loaded, so it's showing the one before. The [Files](#files) page says why. |
 
 ## The Home Assistant-only build
 
-The **IPSTube, Home Assistant only** build (`firmware-ipstube_ha-*.bin`) is the recommended one, and the one the web installer chooses for you. It's for an IPSTube whose screens come from Home Assistant, for example from the Tube Display app. It's the standard IPSTube firmware (`firmware-ipstube-*.bin`) with two things left out, so the clock has more memory free for pictures, GIFs and transitions:
+The **IPSTube, Home Assistant only** build (`firmware-ipstube_ha-*.bin`) is the recommended one, and the one the web installer chooses for you. It's for an IPSTube whose screens come from Home Assistant, for example from the Tube Display app. It's the standard IPSTube firmware (`firmware-ipstube-*.bin`) with three things left out, so the clock has more memory free for pictures, GIFs and transitions:
 
 * **No weather of its own.** Home Assistant has the weather, so the clock doesn't fetch it from OpenWeatherMap. That leaves out the [Weather](#weather) page, the Weather display and the Four + Weather choice on the [Clock](#clock) page (and the weather from Cycle Time, Date), the weather icons on the [Files](#files) page, and the weather entities in Home Assistant, which are removed from Home Assistant if an earlier build made them. A display or number of digits that showed the weather falls back to Time or Six, and so does `2` sent to `clock/<id>/set/display`.
+* **No slide show.** Tube Display shows your pictures instead, from its picture library. That leaves out Slide Show and Four + Picture on the [Clock](#clock) page, Slide Show on the [Files](#files) page and the Slide Show entity in Home Assistant (removed if an earlier build made it). A display or number of digits that showed the slide show falls back to Time or Six, and so does `3` sent to `clock/<id>/set/display`. The slide show pictures that come with the file system (about 0.5 MB) are deleted each time the clock starts, which leaves that much more room for [GIFs](#animated-gifs).
 * **One web UI browser at a time.** Each open web UI keeps a queue of messages in the clock's memory, so when a second browser or tab opens the web UI, the oldest one is disconnected. Reload it to use it there again.
 
-Everything else is the same as the IPSTube build: the time and date, slide shows, LEDs, the screen saver, clock faces, panels, GIFs and Wi-Fi updates. Both builds use the same file system, and you can switch between them with a normal Wi-Fi update of the firmware file; settings are kept. Choose the standard build only for an IPSTube used without Home Assistant, to show the clock's own weather forecast. The other clocks (EleksTube, Si Hai, NovelLife SE, PunkCyber) have standard builds only, and can't update over Wi-Fi.
+Everything else is the same as the IPSTube build: the time and date, LEDs, the screen saver, clock faces, panels, GIFs and Wi-Fi updates. Both builds use the same file system, and you can switch between them with a normal Wi-Fi update of the firmware file; settings are kept. Choose the standard build only for an IPSTube used without Home Assistant, to show the clock's own weather forecast and slide shows. The other clocks (EleksTube, Si Hai, NovelLife SE, PunkCyber) have standard builds only, and can't update over Wi-Fi.
 
 ## The web UI
 
@@ -85,13 +86,13 @@ There's no Save button. A change takes effect on the clock straight away, and th
 
 <img src="ui/clock.webp" alt="The Clock page" width="400">
 
-* **Display** chooses what the clock shows: the **Time**, the **Date**, a **Slide Show** of pictures or **Panels**, pictures streamed to the displays over HTTP, see [Showing pictures from Home Assistant (panels)](#showing-pictures-from-home-assistant-panels). Tube Display sets it to Panels while it shows screens, and to Time for its `clock` rotation entry and while it's paused. The standard builds also have the **Weather** forecast. The clock's button cycles through all but Panels. While Panels is showing, the button asks Home Assistant's Tube Display app for its next screen instead, see [Clock buttons](#clock-buttons).
-* **Cycle Time, Date** shows each of the time and the date for this many seconds, then moves on to the next. 0 turns it off. In the standard builds it's **Cycle Time, Date, Weather** and includes the weather, unless there's no OpenWeatherMap API key. A slide show isn't part of the cycle, and gives way to the time.
+* **Display** chooses what the clock shows: the **Time**, the **Date** or **Panels**, pictures streamed to the displays over HTTP, see [Showing pictures from Home Assistant (panels)](#showing-pictures-from-home-assistant-panels). Tube Display sets it to Panels while it shows screens, and to Time for its `clock` rotation entry and while it's paused. The standard builds also have the **Weather** forecast and a **Slide Show** of pictures. The clock's button switches between the time and the date. While Panels is showing, the button asks Home Assistant's Tube Display app for its next screen instead, see [Clock buttons](#clock-buttons).
+* **Cycle Time, Date** shows each of the time and the date for this many seconds, then moves on to the next. 0 turns it off. In the standard builds it's **Cycle Time, Date, Weather** and includes the weather, unless there's no OpenWeatherMap API key.
 * **Number of Digits**, **12/24 Hour** and **Leading Zero** are shown when Display is Time:
   * **Six** shows hours, minutes and seconds.
   * **Four AM/PM** shows hours and minutes, a flashing colon, and AM or PM on the last display in 12-hour time.
   * **Four + Weather** (standard builds) shows today's forecast on the last display instead.
-  * **Four + Picture** shows a picture from the slide show on the last display instead, changing every 10 seconds.
+  * **Four + Picture** (standard builds) shows a picture from the slide show on the last display instead, changing every 10 seconds.
   * **Four + Panel** shows a picture streamed over HTTP on the last display instead, see [Showing pictures from Home Assistant (panels)](#showing-pictures-from-home-assistant-panels).
   * **Leading Zero** shows a 0 before single-digit hours, such as 09:30 rather than 9:30.
 * **Date Format** is shown when Display is Date: DD-MM-YY, MM-DD-YY or YY-MM-DD.
@@ -128,19 +129,19 @@ The LEDs light the displays from below.
 
 <img src="ui/files.webp" alt="The Files page" width="400">
 
-The clock's images come in sets, each in a `.tar.gz` file: clock faces and slide shows, and in the standard builds weather icons.
+The clock's images come in sets, each in a `.tar.gz` file: clock faces, and in the standard builds weather icons and slide shows.
 
-* Choose **Clock Faces** or **Slide Show** (or **Weather Icons**, standard builds) at the top to list them. The one in use is highlighted.
+* The standard builds have **Clock Faces**, **Weather Icons** and **Slide Show** at the top to choose which list to show. The one in use is highlighted.
 * Tap a name to use it. Changing takes a few seconds while the clock unpacks the images, and the displays show its progress.
 * **Upload** adds a set from your phone or computer. One with the same name as a set already on the clock replaces it.
 * The trash button deletes a set. You can't delete the one in use.
 * **Free space** shows how much room is left for more.
 
-The set in use in each list is also kept unpacked, which takes more room than its file. For example, in the standard builds the maxclassic weather icons take about 450 KB unpacked, and monochrome about 8 KB. If there isn't room for the set you tap, the clock keeps the one it had, and the Files page says so. Delete sets you don't use, or switch to the blank slide show (or smaller weather icons), then try again. GIFs for panels share the same space, see [Animated GIFs](#animated-gifs). If it says the clock was too busy, it was short of memory while serving web pages, so wait a minute and try again.
+The set in use in each list is also kept unpacked, which takes more room than its file. For example, in the standard builds the maxclassic weather icons take about 450 KB unpacked, and monochrome about 8 KB. If there isn't room for the set you tap, the clock keeps the one it had, and the Files page says so. Delete sets you don't use, then try again; in the standard builds, smaller weather icons or the blank slide show also free room. GIFs for panels share the same space, see [Animated GIFs](#animated-gifs). If it says the clock was too busy, it was short of memory while serving web pages, so wait a minute and try again.
 
 You can also choose sets with the [clock's buttons](#clock-buttons), and upload and delete them over MQTT, see [Uploading files over MQTT](#uploading-files-over-mqtt).
 
-More clock faces are in [more_faces](../more_faces) and at [Spider19996/Tube-Clock-Faces](https://github.com/Spider19996/Tube-Clock-Faces), and more weather icons for the standard builds in [weather_icons](../weather_icons). The clock comes with two slide shows, anime_female and blank. blank is there to free up space if you don't show pictures. To make your own sets, see [Image Collections](https://github.com/judge2005/EleksTubeIPS/wiki/Image-Collections) in the upstream wiki.
+More clock faces are in [more_faces](../more_faces) and at [Spider19996/Tube-Clock-Faces](https://github.com/Spider19996/Tube-Clock-Faces), and more weather icons for the standard builds in [weather_icons](../weather_icons). The standard builds come with two slide shows, anime_female and blank. To make your own sets, see [Image Collections](https://github.com/judge2005/EleksTubeIPS/wiki/Image-Collections) in the upstream wiki.
 
 ## Screen Saver
 
@@ -172,7 +173,7 @@ Topics start with `clock/<id>`, where `<id>` is the clock's **MQTT ID** from the
 | Topic | Payload |
 |---|---|
 | `clock/<id>/set/brightness` | 10 to 255 |
-| `clock/<id>/set/display` | 0 for the time, 1 the date, 3 the slide show, 4 panels (2 is the weather, in the standard builds) |
+| `clock/<id>/set/display` | 0 for the time, 1 the date, 4 panels (2 is the weather and 3 the slide show, in the standard builds) |
 | `clock/<id>/set/screen_saver` | `ON` or `OFF` |
 | `clock/<id>/set/custom` | Up to six characters to show instead of the time, see [Showing your own text](#showing-your-own-text) |
 | `clock/<id>/set/backlight_state` | `ON` or `OFF` |
@@ -273,7 +274,7 @@ If the clock isn't connected to MQTT, the button falls back to switching display
 
 Otherwise:
 
-* Press it to switch between the time, the date and the slide show (and the weather in the standard build).
+* Press it to switch between the time and the date (and the weather and the slide show in the standard build).
 * Hold it to turn the displays off, until you hold it again or until the next time Display On turns them on. Outside the Display On hours, hold it to turn them back on, or press it to show them for 10 seconds.
 
 ### Four-button clocks (standard builds)
@@ -406,12 +407,12 @@ Topics start with `clock/<id>`, where `<id>` is the **MQTT ID** shown on the clo
 | Upload | `clock/<id>/files/upload/<set>/<name>` | The `.tar.gz` file |
 | Delete | `clock/<id>/files/delete/<set>/<name>` | Anything, or empty |
 
-`<set>` is `faces` or `slides`, or `weather` in the standard builds. `<name>` is the name without `.tar.gz`: up to 25 characters, without `/`, `\` or `"`. Don't publish these with the retain flag, or the clock will repeat the upload or delete every time it reconnects.
+`<set>` is `faces`, or `weather` or `slides` in the standard builds. `<name>` is the name without `.tar.gz`: up to 25 characters, without `/`, `\` or `"`. Don't publish these with the retain flag, or the clock will repeat the upload or delete every time it reconnects.
 
 The clock reports the result on `clock/<id>/files/status`:
 
 ```json
-{"action":"upload","set":"slides","name":"solar","status":"ok"}
+{"action":"upload","set":"faces","name":"neon","status":"ok"}
 ```
 
 Instead of `ok`, `status` can be `invalid name`, `unknown set`, `unknown action`, `not a .tar.gz file`, `not enough space`, `could not create file`, `write failed`, `rename failed` or `file not found`.
@@ -420,14 +421,14 @@ For example, with Mosquitto's command-line client:
 
 ```
 mosquitto_pub -h <broker> -u <user> -P <password> \
-  -t clock/A1B2C3ipstube/files/upload/slides/solar -f solar.tar.gz
+  -t clock/A1B2C3ipstube/files/upload/faces/neon -f neon.tar.gz
 ```
 
 ## Updating over Wi-Fi
 
 Clocks with 8 MB of flash (the IPSTube ones) have two firmware slots, so they can update themselves over Wi-Fi. Clocks with 4 MB have only one slot and can't; they still update over USB.
 
-Install the firmware once over USB with the **Full** option of the web installer, which puts the two-slot layout on the flash. It keeps the settings and Wi-Fi details, but the file system moves, so it goes back to the built-in clock faces, weather icons and slides: upload any of your own again. After that, updates go over Wi-Fi:
+Install the firmware once over USB with the **Full** option of the web installer, which puts the two-slot layout on the flash. It keeps the settings and Wi-Fi details, but the file system moves, so it goes back to the built-in clock faces (and weather icons and slide shows): upload any of your own again. After that, updates go over Wi-Fi:
 
 * On the [Info](#info) page, pick a `firmware-*.bin` file under **Firmware update** and press **Update**. The page shows the upload's progress, then that the clock is restarting.
 * Or with curl, sending the raw file as the body:
@@ -437,7 +438,7 @@ curl --data-binary @firmware-ipstube_ha-X.bin -H 'Content-Type: application/octe
   http://<clock>/update
 ```
 
-If the web UI has a login, add `--digest -u <user>:<password>`. To update the file system image as well (the web UI pages and the built-in faces and icons), send `littlefs*.bin` with `?target=fs`: `curl --data-binary @littlefs8MB-X.bin -H 'Content-Type: application/octet-stream' 'http://<clock>/update?target=fs'`, or pick that file on the Info page, which sends it there by its name. This replaces uploaded faces, icons and slides with the built-in ones; settings are kept. An optional `md5` query argument checks the file, e.g. `http://<clock>/update?md5=<32 hex digits>`. The reply is `200 Updated, restarting`, or the error, such as `501` on a clock with no second slot or `409` when an update is already running.
+If the web UI has a login, add `--digest -u <user>:<password>`. To update the file system image as well (the web UI pages and the built-in faces and icons), send `littlefs*.bin` with `?target=fs`: `curl --data-binary @littlefs8MB-X.bin -H 'Content-Type: application/octet-stream' 'http://<clock>/update?target=fs'`, or pick that file on the Info page, which sends it there by its name. This replaces uploaded clock faces (and weather icons and slide shows) with the built-in ones; settings are kept. An optional `md5` query argument checks the file, e.g. `http://<clock>/update?md5=<32 hex digits>`. The reply is `200 Updated, restarting`, or the error, such as `501` on a clock with no second slot or `409` when an update is already running.
 
 With Home Assistant, a **Firmware** update entity appears under the clock's Configuration. It offers an update once the broker has a message on `clock/<id>/ota/latest` (retained) with a newer version, and **Install** makes the clock download the file and restart into it.
 

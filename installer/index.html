@@ -226,12 +226,12 @@
     <fieldset>
       <legend>Clock</legend>
       <div class="models">
-        <label class="model recommended"><input type="radio" name="model" value="ipstube_ha" checked><span><span>IPSTube, Home Assistant only<span class="badge">Recommended</span></span><span class="detail">H401, H402, with screens from Home Assistant's Tube Display app. Keeps the clock's time, faces, slide shows, LEDs and screen saver; leaves out the clock's own weather (Home Assistant has it) for more free memory. One web UI browser at a time.</span></span></label>
+        <label class="model recommended"><input type="radio" name="model" value="ipstube_ha" checked><span><span>IPSTube, Home Assistant only<span class="badge">Recommended</span></span><span class="detail">H401, H402, with screens from Home Assistant's Tube Display app. Keeps the clock's time, faces, LEDs and screen saver; leaves out the clock's own weather and slide shows (Home Assistant has both) for more free memory. One web UI browser at a time.</span></span></label>
       </div>
       <details class="others">
         <summary>Other clocks and builds</summary>
         <div class="models">
-          <label class="model"><input type="radio" name="model" value="ipstube"><span><span>IPSTube, standard</span><span class="detail">H401, H402 used on their own, with the clock's OpenWeatherMap weather</span></span></label>
+          <label class="model"><input type="radio" name="model" value="ipstube"><span><span>IPSTube, standard</span><span class="detail">H401, H402 used on their own, with the clock's OpenWeatherMap weather and slide shows</span></span></label>
           <label class="model"><input type="radio" name="model" value="ipstube_dim"><span><span>IPSTube with hardware dimming</span></span></label>
           <label class="model"><input type="radio" name="model" value="elekstubev1"><span><span>EleksTube IPS V1</span><span class="detail">and Xunfeng IPS</span></span></label>
           <label class="model"><input type="radio" name="model" value="elekstubev2"><span><span>EleksTube IPS V2</span></span></label>
@@ -260,7 +260,7 @@
       </div>
       <div class="option">
         <h3>Full install</h3>
-        <p>For a clock running its original firmware, or to start over. Also installs the built-in clock faces, icons and slide shows, replacing any you've uploaded. On an IPSTube it sets up the two firmware slots for updates over Wi-Fi.</p>
+        <p>For a clock running its original firmware, or to start over. Also installs the built-in clock faces and other images, replacing any you've uploaded. On an IPSTube it sets up the two firmware slots for updates over Wi-Fi.</p>
         <p class="note">On a first install, tick <strong>Erase device</strong> when asked. Leave it unticked to keep your settings and Wi-Fi details.</p>
         <p class="files" data-files="full"></p>
         <esp-web-install-button data-kind="full">
