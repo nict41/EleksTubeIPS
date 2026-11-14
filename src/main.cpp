@@ -537,20 +537,49 @@ void onMatrixHueChanged(ConfigItem<int> &item) {
 unsigned long lastDisplayChange = 0;
 
 #ifdef HA_ONLY
-// This build has no weather, so a display or number of digits that would show it (saved by an earlier
-// build, its default, or set over MQTT) falls back to one that doesn't, and the web UI hears of it
-void haOnlyNoWeather() {
+// This build has no weather and no slide show (Home Assistant shows both), so a display or number of
+// digits that would show them (saved by an earlier build, its default, or set over MQTT) falls back to
+// one that doesn't, and so does the web UI's Files list. The web UI hears of each change.
+void haOnlyFallbacks() {
 	IntConfigItem &display = IPSClock::getTimeOrDate();
-	if (display.value == IPSClock::WEATHER) {
+	if (display.value == IPSClock::WEATHER || display.value == IPSClock::SLIDE_SHOW) {
 		display.value = IPSClock::TIME;
 		broadcastUpdate(display);
 		display.notify();
 	}
 	ByteConfigItem &digits = IPSClock::getFourDigitDisplay();
-	if (digits.value == IPSClock::FOUR_WITH_WEATHER) {
+	if (digits.value == IPSClock::FOUR_WITH_WEATHER || digits.value == IPSClock::FOUR_WITH_SLIDESHOW) {
 		digits.value = IPSClock::SIX;
 		broadcastUpdate(digits);
 		digits.notify();
+	}
+	if (fileSet->value != "faces") {
+		fileSet->value = "faces";
+		broadcastUpdate(*fileSet);
+	}
+}
+#endif
+
+#ifdef HA_ONLY
+// Deletes the slide show pictures the file system image brings (or an earlier build unpacked): this
+// build has no slide show, so they'd only take up room that GIFs could use. A file system update
+// brings them back, so this runs at every start. The folders themselves stay.
+static void removeSlideFiles() {
+	bool removed = false;
+	for (const char *path : { "/ips/slides", "/ips/slides_cache" }) {
+		fs::File dir = LittleFS.open(path);
+		if (!dir || !dir.isDirectory()) {
+			continue;
+		}
+		String name = dir.getNextFileName();
+		while (name.length() > 0) {
+			removed = LittleFS.remove(name) || removed;
+			name = dir.getNextFileName();
+		}
+		dir.close();
+	}
+	if (removed) {
+		fsChanged();
 	}
 }
 #endif
@@ -597,20 +626,18 @@ void onWeatherColorChanged(ConfigItem<T> &item) {
 bool menuDrawn = false;
 
 // The display the clock's button moves on to: time, date, weather, slide show, then the time again.
-// PANELS is only chosen from the web UI or MQTT, so it's skipped, and so is the weather in the Home
-// Assistant-only build (otherwise the press would land on it, fall back to the time and never reach
-// the slide show).
+// PANELS is only chosen from the web UI or MQTT, so it's skipped. The Home Assistant-only build has
+// no weather or slide show, so its button just switches between the time and the date.
 int nextButtonDisplay(int display) {
-	display = (display + 1) % (IPSClock::PANELS + 1);
 #ifdef HA_ONLY
-	if (display == IPSClock::WEATHER) {
-		display++;
-	}
-#endif
+	return display == IPSClock::TIME ? IPSClock::DATE : IPSClock::TIME;
+#else
+	display = (display + 1) % (IPSClock::PANELS + 1);
 	if (display == IPSClock::PANELS) {
 		display = IPSClock::TIME;
 	}
 	return display;
+#endif
 }
 
 void onButtonEvent(const Button *button, Button::Event evt) {
@@ -821,6 +848,7 @@ void updateDisplays() {
 		}
 
 		tfts->setShowDigits(IPSClock::getTimeOrDate());
+#ifndef HA_ONLY	// No slide show in the Home Assistant-only build, so its pictures aren't unpacked
 		if (reloadSlides || slidesSet->value != *oldSlidesSet) {
 			reloadSlides = false;
 			slidesSet->value = imageUnpacker->unpackImages("/ips/slides/", "/ips/slides_cache", *slidesSet, *oldSlidesSet);
@@ -832,10 +860,11 @@ void updateDisplays() {
 			tfts->invalidateAllDigits();
 			tfts->release();
 		}
+#endif
 		weather->checkIconPack();
 		ipsClock->checkIconPack();
 #ifdef HA_ONLY
-		haOnlyNoWeather();
+		haOnlyFallbacks();
 #endif
 
 		switch (IPSClock::getTimeOrDate().value) {
@@ -2322,7 +2351,7 @@ void panelHandler(AsyncWebServerRequest *request) {
 		+ ",\"drawing\":" + String(PanelDraw::busy() ? "true" : "false")
 		+ ",\"last_draw_ms\":" + String((unsigned long)PanelDraw::lastDurationMs())
 #ifdef HA_ONLY
-		+ ",\"weather\":false"	// For the web UI, which hides the weather settings then
+		+ ",\"weather\":false,\"slides\":false"	// For the web UI, which hides those settings then
 #endif
 		+ ",\"gif\":true,\"gif_free\":"
 		+ String((unsigned long)GifPlayer::freeBytes())
@@ -3256,6 +3285,9 @@ void setup() {
 	tfts = new TFTs();
 
 	LittleFS.begin();
+#ifdef HA_ONLY
+	removeSlideFiles();
+#endif
 
 	// Setup TFTs
 	tfts->begin(LittleFS);
